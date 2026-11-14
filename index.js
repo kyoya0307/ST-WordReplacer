@@ -233,10 +233,31 @@ function installAPI() {
         },
         import:data=>{settings=validateSettings(data);selected=null;remember();if(dialog.open)render();},
     });
-    const c=context();
-    if(c.SlashCommandParser&&c.SlashCommand){
-        c.SlashCommandParser.addCommandObject(c.SlashCommand.fromProps({name:'wordlib',callback:()=>{openManager();return '';},helpString:'打开分类词库管理面板'}));
+}
+// 与 ST 内置 caption 扩展相同的设置标题和魔法棒条目结构。
+export function mountEntrypoints() {
+    const host=document.querySelector('#extensions_settings2')??document.querySelector('#extensions_settings');
+    if(host&&!document.getElementById('wr-settings')){
+        const header=node('div',{class:'inline-drawer-toggle inline-drawer-header'},
+            node('b',{},'分类词库 · 快捷替换'),
+            node('div',{class:'inline-drawer-icon fa-solid fa-circle-chevron-down down'}));
+        const content=node('div',{class:'inline-drawer-content'},
+            button('打开词库管理',()=>openManager()),
+            node('small',{},'v1.0.1 · 分类词库、批量改词、预览与备份'),
+            node('small',{},'也可从聊天输入区旁的魔法棒打开词库管理。'));
+        host.append(node('div',{id:'wr-settings',class:'wr-settings'},node('div',{class:'inline-drawer'},header,content)));
     }
+    const menu=document.getElementById('extensionsMenu');
+    if(menu&&!document.getElementById('wr-wand-container')){
+        const item=node('div',{id:'wr-wand-open',class:'list-group-item flex-container flexGap5',role:'button',tabIndex:0,title:'打开分类词库管理',
+            onclick:protect(()=>openManager()),onkeydown:protect(e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openManager();}})},
+            node('div',{class:'fa-solid fa-book extensionsMenuExtensionButton','aria-hidden':'true'}),
+            node('span',{},'分类词库 · 快捷替换'));
+        menu.append(node('div',{id:'wr-wand-container',class:'extension_container'},item));
+        // ST 在没有菜单项时会隐藏魔法棒；新增条目后恢复其可见性。
+        const wand=document.getElementById('extensionsMenuButton');if(wand)wand.style.display='flex';
+    }
+    return !!document.getElementById('wr-settings')&&!!document.getElementById('wr-wand-container');
 }
 export function initialize() {
     if(document.getElementById('wr-manager'))return;
@@ -247,12 +268,10 @@ export function initialize() {
     dialog=node('dialog',{id:'wr-manager',class:'wr-dialog','aria-label':'分类词库管理'});
     pane=node('div',{});dialog.append(pane);document.body.append(dialog);
     dialog.addEventListener('click',e=>{if(e.target===dialog)dialog.close();});
-    const host=document.querySelector('#extensions_settings2')??document.querySelector('#extensions_settings');
-    if(host)host.append(node('div',{class:'wr-settings'},node('b',{},'分类词库 · 快捷替换'),button('打开词库管理',()=>openManager()),node('small',{},'Alt + Shift + W · 或输入 /wordlib')));
-    const quick=button('词库',()=>openManager(),{id:'wr-quick',title:'打开词库管理（Alt+Shift+W）'});
-    const toolbar=document.querySelector('#send_form');
-    if(toolbar)toolbar.append(quick);else{quick.classList.add('wr-floating');document.body.append(quick);}
-    document.addEventListener('keydown',e=>{if(e.altKey&&e.shiftKey&&e.code==='KeyW'){e.preventDefault();openManager();}});
+    if(!mountEntrypoints()){
+        const observer=new window.MutationObserver(()=>{if(mountEntrypoints())observer.disconnect();});
+        observer.observe(document.body,{childList:true,subtree:true});
+    }
     const selectionButton=button('＋ 加入词库',()=>{const text=selectedText;selectionButton.hidden=true;openManager(text);},{id:'wr-selection',hidden:true,title:'把选中文字作为原词加入自定义分类'});
     document.body.append(selectionButton);
     document.addEventListener('mouseup',e=>{
