@@ -1,0 +1,12 @@
+{
+  "display_name": "分类词库 · 快捷替换",
+  "loading_order": 80,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "Edgar; original word list and contextual rules: OwO",
+  "version": "1.0.0",
+  "homePage": "https://github.com/kyoya0307/ST-WordReplacer",
+  "auto_update": false
+}
