@@ -3,16 +3,18 @@ import { legacyBefore, legacyAfter } from './legacy.js';
 
 export const uid = () => globalThis.crypto?.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export function createSettings() {
-    return { version: 1, enabled: true, assistant: true, user: false, edited: false,
+    return { version: 2, enabled: true, assistant: true, user: false, edited: true, display: true, prompt: true,
         contextual: true, protectCode: true, exceptions: [], groups: structuredClone(DEFAULT_GROUPS) };
 }
 export function validateSettings(data) {
-    if (!data || data.version !== 1 || !Array.isArray(data.groups)) throw new Error('不是支持的词库备份（version: 1）。');
+    if (!data || ![1,2].includes(data.version) || !Array.isArray(data.groups)) throw new Error('不是支持的词库备份（version: 1 或 2）。');
     if (data.groups.length > 200) throw new Error('分类不能超过 200 个。');
     const base = createSettings();
-    for (const key of ['enabled','assistant','user','edited','contextual','protectCode']) {
+    for (const key of ['enabled','assistant','user','edited','display','prompt','contextual','protectCode']) {
         if (typeof data[key] === 'boolean') base[key] = data[key];
     }
+    // 旧版的 edited=false 是默认值；新版采用可随时关闭的推荐配置。
+    if(data.version===1)base.edited=true;
     let count = 0;
     base.groups = data.groups.map(g => {
         if (!g || typeof g.name !== 'string' || !g.name.trim() || !Array.isArray(g.rules)) throw new Error('分类格式有误。');
@@ -32,10 +34,8 @@ const escape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // 长词优先、一次替换。后面的分类覆盖前面分类中的同名词；替换结果不再次参与匹配。
 export function compile(settings) {
     const rules = new Map();
-    const conflicts = [];
     for (const group of settings.groups) if (group.enabled) for (const rule of group.rules) {
         if (!rule.enabled || !rule.from) continue;
-        if (rules.has(rule.from)) conflicts.push(rule.from);
         rules.set(rule.from, {...rule, group:group.name});
     }
     const keys = [...rules.keys()].sort((a,b) => b.length-a.length);
@@ -46,7 +46,7 @@ export function compile(settings) {
     guardParts.push(...guards.map(escape));
     const guard = guardParts.length ? new RegExp(guardParts.join('|'), 'gu') : null;
     return {
-        conflicts:[...new Set(conflicts)],
+        conflicts:inspectRules(settings).filter(x=>x.kind==='conflict').map(x=>x.from),
         run(input) {
             if (typeof input !== 'string' || !settings.enabled) return {text:input,hits:[]};
             const hitMap = new Map();
@@ -85,6 +85,56 @@ export function compile(settings) {
             return {text,hits:[...hitMap.values()]};
         },
     };
+}
+
+// 相同原词和替换值是重复提示；相同原词但替换不同才是冲突。
+export function inspectRules(settings) {
+    const byFrom=new Map();
+    for(const group of settings.groups)for(const rule of group.rules){
+        if(!rule.from)continue;
+        const rows=byFrom.get(rule.from)??[];
+        rows.push({groupId:group.id,group:group.name,ruleId:rule.id,from:rule.from,to:rule.to,active:group.enabled&&rule.enabled});
+        byFrom.set(rule.from,rows);
+    }
+    return [...byFrom].filter(([,rows])=>rows.length>1).map(([from,rows])=>{
+        const active=rows.filter(x=>x.active);
+        return {from,rows,kind:new Set(rows.map(x=>x.to)).size>1?'conflict':'duplicate',
+            activeConflict:new Set(active.map(x=>x.to)).size>1,winner:active.at(-1)??null};
+    });
+}
+
+export function planPaste(target, incoming) {
+    const additions=[],duplicates=[],conflicts=[];
+    const staged=target.rules.map(r=>({...r}));
+    for(const rule of incoming){
+        if(!rule||typeof rule.from!=='string'||!rule.from||typeof rule.to!=='string')throw new Error('复制词条格式不正确。');
+        const matches=staged.filter(r=>r.from===rule.from);
+        if(matches.length&&matches.every(r=>r.to===rule.to)){duplicates.push(rule);continue;}
+        if(matches.length)conflicts.push({incoming:rule,existing:matches});
+        else additions.push(rule);
+        staged.push(rule);
+    }
+    return {additions,duplicates,conflicts};
+}
+export function pasteRules(target, incoming, policy='skip', capacity=20000) {
+    if(!['skip','overwrite','disabled'].includes(policy))throw new Error('未知的冲突处理方式。');
+    const plan=planPaste(target,incoming),draft=target.rules.map(r=>({...r}));
+    for(const rule of incoming){
+        const matches=draft.filter(r=>r.from===rule.from);
+        if(matches.length&&matches.every(r=>r.to===rule.to))continue;
+        if(matches.length){
+            if(policy==='skip')continue;
+            if(policy==='overwrite'){
+                // 保留同名规则的开关，只统一替换值，避免旧规则悄悄覆盖新值。
+                matches.forEach(r=>{r.to=rule.to;});continue;
+            }
+            if(matches.some(r=>r.to===rule.to))continue;
+        }
+        draft.push({...rule,id:uid(),enabled:matches.length?false:rule.enabled!==false});
+    }
+    if(draft.length-target.rules.length>capacity)throw new Error('粘贴后词条总数超过 20000 条。');
+    target.rules=draft;
+    return plan;
 }
 
 export function parseBatch(text) {

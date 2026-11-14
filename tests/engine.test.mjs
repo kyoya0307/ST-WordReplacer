@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSettings, validateSettings, compile, parseBatch, replaceMessage } from '../engine.js';
+import { createSettings, validateSettings, compile, parseBatch, replaceMessage, inspectRules, planPaste, pasteRules } from '../engine.js';
+import { displayCopy, transformPrompt } from '../runtime.js';
 function custom(rules, extras={}) {
     return {...createSettings(),contextual:false,groups:[{id:'test',name:'测试',enabled:true,rules:rules.map(([from,to])=>({from,to,enabled:true}))}],...extras};
 }
 test('迁入原词库 124 条并保留原值',()=>{
     const s=createSettings();assert.equal(s.groups.flatMap(g=>g.rules).length,124);
     assert.equal(compile(s).run('巾帼不让须眉，旺夫相，命硬克夫。').text,'，锦程相，命格自强。');
-    assert.equal(s.user,false);assert.equal(s.edited,false);
+    assert.equal(s.user,false);assert.equal(s.edited,true);assert.equal(s.display,true);assert.equal(s.prompt,true);
 });
 test('长词优先，空值删除，替换结果不串改',()=>{
     const r=compile(custom([['旺夫','X'],['旺夫相','Y'],['Y','Z'],['删','']]));
@@ -65,4 +66,58 @@ test('替换正文及当前 swipe，不动其他候选、推理区或系统消�
 test('没有 swipe 数组的消息和无命中消息',()=>{
     const runner=compile(custom([['原','新']]));const m={mes:'原'};
     assert.equal(replaceMessage(m,runner).replacement,'新');assert.equal(replaceMessage(m,runner),null);
+});
+test('重复只提示，冲突区分已启用与潜在冲突，列出当前胜出规则',()=>{
+    const s=custom([['甲','乙']]);s.groups.push({id:'b',name:'分类二',enabled:true,rules:[{id:'2',from:'甲',to:'乙',enabled:true}]});
+    assert.equal(inspectRules(s)[0].kind,'duplicate');assert.deepEqual(compile(s).conflicts,[]);
+    s.groups[1].rules[0].to='丙';let issue=inspectRules(s)[0];assert.equal(issue.kind,'conflict');assert.equal(issue.activeConflict,true);assert.equal(issue.winner.group,'分类二');
+    s.groups[1].enabled=false;issue=inspectRules(s)[0];assert.equal(issue.activeConflict,false);assert.equal(issue.winner.group,'测试');
+});
+test('复制粘贴保留空替换/多行/开关，为复制项生成新 ID',()=>{
+    const g={rules:[]},incoming=[{id:'old',from:'带\n换行',to:'',enabled:false}];
+    pasteRules(g,incoming);assert.equal(g.rules[0].from,incoming[0].from);assert.equal(g.rules[0].to,'');assert.equal(g.rules[0].enabled,false);assert.notEqual(g.rules[0].id,'old');assert.equal(incoming[0].id,'old');
+    pasteRules(g,incoming);assert.equal(g.rules.length,1);
+});
+test('粘贴预览与三种冲突策略，失败时不产生部分修改',()=>{
+    const incoming=[{from:'原',to:'新',enabled:true},{from:'新增',to:'值',enabled:true}];
+    const target=()=>({rules:[{id:'a',from:'原',to:'旧',enabled:true}]});
+    let g=target();assert.equal(planPaste(g,incoming).conflicts.length,1);pasteRules(g,incoming);assert.equal(g.rules[0].to,'旧');assert.equal(g.rules.length,2);
+    g=target();pasteRules(g,incoming,'overwrite');assert.equal(g.rules[0].to,'新');
+    g=target();pasteRules(g,incoming,'disabled');assert.equal(g.rules[1].enabled,false);assert.equal(g.rules[1].to,'新');
+    g=target();assert.throws(()=>pasteRules(g,incoming,'disabled',0));assert.equal(g.rules.length,1);assert.equal(g.rules[0].to,'旧');
+});
+test('目标分类已有多个同名不同替换时，不把冲突误判为相同重复',()=>{
+    const g={rules:[{id:'a',from:'原',to:'旧',enabled:true},{id:'b',from:'原',to:'新',enabled:true}]};
+    const input=[{from:'原',to:'新'}];assert.equal(planPaste(g,input).conflicts.length,1);pasteRules(g,input,'overwrite');assert.deepEqual(g.rules.map(r=>r.to),['新','新']);
+});
+test('旧版迁移保留用户词库，新版导入保留用户关闭编辑选项',()=>{
+    const old={...custom([['原','新']]),version:1,edited:false};const s=validateSettings(old);assert.equal(s.version,2);assert.equal(s.edited,true);assert.equal(s.groups[0].rules[0].from,'原');
+    assert.equal(validateSettings({...s,edited:false}).edited,false);
+});
+test('显示替换创建副本，聊天正文、swipes、推理和显示覆盖原值完全保留',()=>{
+    const s=custom([['原','新']]),r=compile(s);
+    const m={mes:'原',is_user:false,swipe_id:0,swipes:['原'],extra:{reasoning:'原',display_text:'原'}};
+    const snapshot=structuredClone(m),out=displayCopy(m,s,r);
+    assert.equal(out.mes,'新');assert.equal(out.extra.display_text,'新');assert.deepEqual(m,snapshot);
+    assert.equal(displayCopy(m,{...s,display:false},r),m);
+    assert.equal(displayCopy({...m,is_user:true},s,r).mes,'原');
+    assert.equal(displayCopy({...m,extra:{type:'narrator'}},s,r).mes,'原');
+});
+test('提示词替换仅改请求对象，保留源消息、其他角色及原对象引用',()=>{
+    const s=custom([['原','新']]),r=compile(s),source=[{mes:'原',is_user:false},{mes:'原',is_user:true},{mes:'原',is_system:true}];
+    const messages=[...source];transformPrompt(messages,s,r,{sourceChat:source});
+    assert.deepEqual(messages.map(m=>m.mes),['新','原','原']);assert.equal(source[0].mes,'原');assert.notEqual(messages[0],source[0]);
+    assert.throws(()=>transformPrompt(source,s,r,{sourceChat:source}),/拒绝/);
+    const disabled=[...source];transformPrompt(disabled,{...s,prompt:false},r);assert.equal(disabled[0].mes,'原');
+});
+test('提示词中包含推理时保留完整推理前缀，只处理正文',()=>{
+    const s=custom([['原','新']]),r=compile(s),m={mes:'<think>原推理</think>\n原正文',extra:{reasoning:'原推理'}};
+    const request=[m];transformPrompt(request,s,r,{reasoning:{prefix:'<think>',suffix:'</think>',separator:'\n'}});
+    assert.equal(request[0].mes,'<think>原推理</think>\n新正文');assert.equal(m.mes,'<think>原推理</think>\n原正文');
+    const incomplete=[{mes:'<think>原推理',extra:{reasoning:'原推理'}}];transformPrompt(incomplete,s,r,{reasoning:{prefix:'<think>',suffix:'</think>'},type:'continue'});assert.equal(incomplete[0].mes,'<think>原推理');
+});
+test('原生正则已处理推理时识别真实前缀，不改推理',()=>{
+    const s=custom([['原','新']]),r=compile(s),request=[{mes:'原已格式化\n原正文',extra:{reasoning:'原推理'}}];
+    transformPrompt(request,s,r,{reasoning:{separator:'\n'},nativeRegex:{regex_placement:{REASONING:6},getRegexedString:()=> '原已格式化'}});
+    assert.equal(request[0].mes,'原已格式化\n新正文');
 });

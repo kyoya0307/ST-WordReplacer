@@ -1,8 +1,10 @@
-import { createSettings, validateSettings, compile, parseBatch, replaceMessage, uid } from './engine.js';
+import { createSettings, validateSettings, compile, parseBatch, inspectRules, planPaste, pasteRules, uid } from './engine.js';
+import { installRuntime } from './runtime.js';
 
 const KEY = 'st_word_replacer';
 let settings, runner, selected, dialog, pane, status, search = '', page = 0, tab = '词库';
 let historyPlan = null, undo = null, selectedText = '';
+let runtime, copiedRules=[], selectedRules=new Set(), selectionGroup=null, allSearch='', auditFilter='all';
 const context = () => SillyTavern.getContext();
 const node = (tag, attrs = {}, ...children) => {
     const el = document.createElement(tag);
@@ -29,7 +31,12 @@ function remember() {
     runner = compile(settings);
     context().extensionSettings[KEY] = settings;
     context().saveSettingsDebounced();
-    if (status) {status.textContent = '修改已记录 · 自动保存到 ST 设置';status.classList.remove('wr-error');}
+    runtime?.refresh();
+    if (status) {
+        const issues=inspectRules(settings),conflicts=issues.filter(x=>x.kind==='conflict'),duplicates=issues.filter(x=>x.kind==='duplicate');
+        status.textContent = `修改已记录 · 自动保存到 ST 设置${conflicts.length?` · ⚠ ${conflicts.length} 个冲突，请到“全库检索与检查”核对`:''}${duplicates.length?` · ${duplicates.length} 个相同重复（仅提示）`:''}`;
+        status.classList.remove('wr-error');status.classList.toggle('wr-warn',conflicts.length>0);
+    }
 }
 function checkbox(label, value, action) {
     return node('label', {class:'wr-check'}, node('input',{type:'checkbox',checked:value,onchange:protect(e=>action(e.target.checked))}), label);
@@ -67,18 +74,24 @@ function render() {
         button('关闭',()=>dialog.close(),{'aria-label':'关闭词库管理'}));
     const controls = node('div',{class:'wr-controls'},
         checkbox('启用替换',settings.enabled,v=>{settings.enabled=v;remember();}),
-        checkbox('AI 回复完成后',settings.assistant,v=>{settings.assistant=v;remember();}),
-        checkbox('自己发出的消息',settings.user,v=>{settings.user=v;remember();}),
-        checkbox('编辑后的消息',settings.edited,v=>{settings.edited=v;remember();}),
-        checkbox('保护代码块',settings.protectCode,v=>{settings.protectCode=v;remember();}));
-    const tabs = node('nav',{class:'wr-tabs'},...['词库','预览与保护','备份与导入','历史消息'].map(name=>button(name,()=>{tab=name;render();},{class:`menu_button wr-button ${name===tab?'wr-active':''}`})));
+        checkbox('AI 输出',settings.assistant,v=>{settings.assistant=v;remember();}),
+        checkbox('自己发出的消息',settings.user,v=>{settings.user=v;remember();}));
+    const advanced=node('details',{},node('summary',{},'更多处理选项（可按需调整）'),node('div',{class:'wr-controls'},
+        checkbox('编辑后生效',settings.edited,v=>{settings.edited=v;remember();}),
+        checkbox('影响显示',settings.display,v=>{settings.display=v;remember();}),
+        checkbox('影响模型输入',settings.prompt,v=>{settings.prompt=v;remember();}),
+        checkbox('保护代码块',settings.protectCode,v=>{settings.protectCode=v;remember();})));
+    controls.append(button('应用推荐配置',()=>{Object.assign(settings,{enabled:true,assistant:true,user:false,edited:true,display:true,prompt:true,protectCode:true});remember();render();}));
+    const explanation=node('p',{class:'wr-explainer'},'自动替换保留聊天文件原文。默认只处理 AI 正文，显示与发送给模型时都生效；编辑后也会刷新。作用范围可按需勾选。');
+    const tabs = node('nav',{class:'wr-tabs'},...['词库','全库检索与检查','预览与保护','备份与导入','历史消息'].map(name=>button(name,()=>{tab=name;render();},{class:`menu_button wr-button ${name===tab?'wr-active':''}`})));
     const body = node('div',{class:'wr-body'});
     status = node('div',{class:'wr-status',role:'status','aria-live':'polite'},'词库只保存在你的 ST 设置中，不会自动上传 GitHub。');
-    pane.append(top,controls,tabs,body,status);
+    pane.append(top,controls,explanation,advanced,tabs,body,status);
     if (tab==='词库') renderDictionary(body);
     if (tab==='预览与保护') renderPreview(body);
     if (tab==='备份与导入') renderBackup(body);
     if (tab==='历史消息') renderHistory(body);
+    if (tab==='全库检索与检查') renderAudit(body);
 }
 function renderDictionary(body) {
     const sidebar = node('aside',{class:'wr-sidebar'});
@@ -100,6 +113,7 @@ function renderDictionary(body) {
     const g=group();
     if(!g){content.append(node('p',{},'请先新建分类。'));return;}
     selected=g.id;
+    if(selectionGroup!==g.id){selectionGroup=g.id;selectedRules.clear();}
     content.append(node('div',{class:'wr-row'},field(g.name,'分类名称',v=>{g.name=v.trim()||'未命名分类';remember();}),
         button('导出此类',()=>download(`${g.name}.json`,{...createSettings(),groups:[structuredClone(g)]})),
         button('删除分类',()=>{if(!confirm(`删除“${g.name}”及其中 ${g.rules.length} 个词条？`))return;settings.groups=settings.groups.filter(x=>x!==g);selected=null;remember();render();})));
@@ -110,27 +124,70 @@ function renderDictionary(body) {
     })));
     const table=node('div',{class:'wr-rule-list'});
     const pager=node('div',{class:'wr-row'});
+    const selectionInfo=node('span',{});
+    const pastePanel=node('div',{class:'wr-paste-panel'});
+    const selectionStatus=()=>{selectionInfo.textContent=`已选 ${selectedRules.size} 条 · 已复制 ${copiedRules.length} 条`;};
+    const batchTools=node('div',{class:'wr-row'},
+        button('全选搜索结果',()=>{g.rules.filter(r=>r.from.includes(search)||r.to.includes(search)).forEach(r=>selectedRules.add(r.id));refresh();}),
+        button('清空选择',()=>{selectedRules.clear();refresh();}),
+        button('复制所选',()=>{copiedRules=structuredClone(g.rules.filter(r=>selectedRules.has(r.id)));if(!copiedRules.length)throw new Error('请先勾选要复制的词条。');selectionStatus();status.textContent=`已复制 ${copiedRules.length} 条，现在可切换分类后粘贴。`;}),
+        button('粘贴到此类',()=>{
+            if(!copiedRules.length)throw new Error('请先在任意分类中复制词条。');
+            const plan=planPaste(g,copiedRules);
+            const policy=node('select',{class:'text_pole'},node('option',{value:'skip'},'冲突：保留现有，跳过复制项'),node('option',{value:'overwrite'},'冲突：用复制项覆盖现有替换词'),node('option',{value:'disabled'},'冲突：新增为停用词条，稍后核对'));
+            pastePanel.replaceChildren(node('p',{},`待新增 ${plan.additions.length} 条 · 相同重复 ${plan.duplicates.length} 条（跳过） · 冲突 ${plan.conflicts.length} 条`),
+                ...plan.conflicts.slice(0,20).map(x=>node('div',{class:'wr-conflict'},`${x.incoming.from}：现有 ${x.existing.map(r=>r.to||'〔删除〕').join(' / ')}；复制项 ${x.incoming.to||'〔删除〕'}`)),policy,
+                button('确认粘贴',()=>{pasteRules(g,copiedRules,policy.value,20000-settings.groups.reduce((n,x)=>n+x.rules.length,0));remember();render();}),button('取消粘贴',()=>pastePanel.replaceChildren()));
+        }),selectionInfo);
     const refresh=()=>{
         table.replaceChildren();pager.replaceChildren();
         const filtered=g.rules.filter(r=>r.from.includes(search)||r.to.includes(search));
         const max=Math.max(0,Math.ceil(filtered.length/80)-1);page=Math.min(page,max);
-        table.append(node('div',{class:'wr-rule wr-table-head'},node('span',{},'启用'),node('span',{},'原词'),node('span',{},'替换为 · 空白即删除'),node('span',{},'操作')));
+        const issues=new Map(inspectRules(settings).map(x=>[x.from,x]));
+        table.append(node('div',{class:'wr-rule wr-table-head'},node('span',{},'选 / 启用'),node('span',{},'原词'),node('span',{},'替换为 · 空白即删除'),node('span',{},'操作')));
         filtered.slice(page*80,page*80+80).forEach(r=>{
-            const row=node('div',{class:'wr-rule'},checkbox('',r.enabled,v=>{r.enabled=v;remember();}),
+            const issue=issues.get(r.from),label=issue?(issue.kind==='conflict'?'⚠ 冲突':'重复'):'删除';
+            const row=node('div',{class:'wr-rule','data-rule-id':r.id},node('div',{class:'wr-row-checks'},checkbox('选择',selectedRules.has(r.id),v=>{v?selectedRules.add(r.id):selectedRules.delete(r.id);selectionStatus();}),checkbox('启用',r.enabled,v=>{r.enabled=v;remember();})),
                 field(r.from,'原词',v=>{if(!v){status.textContent='原词不能为空，暂时保留之前的原词；请补充或删除此行。';return;}r.from=v;remember();}),
                 field(r.to,'留空即删除',v=>{r.to=v;remember();}),
-                button('删除',()=>{g.rules=g.rules.filter(x=>x!==r);remember();refresh();}));
+                node('div',{},...(issue?[button(label,()=>{allSearch=r.from;tab='全库检索与检查';render();},{class:`menu_button wr-button ${issue.kind==='conflict'?'wr-conflict':'wr-info'}`,title:'查看相关分类和生效规则'})]:[]),button('删除',()=>{g.rules=g.rules.filter(x=>x!==r);selectedRules.delete(r.id);remember();refresh();})));
             table.append(row);
         });
         pager.append(button('上一页',()=>{page=Math.max(0,page-1);refresh();}),node('span',{},`第 ${page+1}/${max+1} 页 · ${filtered.length} 条`),button('下一页',()=>{page=Math.min(max,page+1);refresh();}));
+        selectionStatus();
     };
-    content.append(field(search,'搜索当前分类的原词 / 替换词',v=>{search=v;page=0;refresh();}),table,pager);
+    content.append(field(search,'搜索当前分类的原词 / 替换词',v=>{search=v;page=0;refresh();}),batchTools,pastePanel,table,pager);
     const batch=node('textarea',{class:'text_pole',rows:4,placeholder:'每行一条，例如：\n老天爷 → 老天奶\n母狗 →\n也支持 => 或制表符；# 开头为注释。'});
     content.append(node('details',{},node('summary',{},'批量添加到当前分类'),batch,button('检查并添加',()=>{
         const rules=parseBatch(batch.value);if(!rules.length)throw new Error('没有可添加的词条。');
         rules.forEach(r=>upsert(g,r.from,r.to));remember();render();
     }),node('small',{},'批量格式会去掉两端空格；需要匹配空格时使用单条编辑。')));
     refresh();
+}
+function renderAudit(body) {
+    const results=node('div',{}),summary=node('p',{});
+    const filter=node('select',{class:'text_pole'},...Object.entries({all:'全部词条',conflict:'仅看冲突',duplicate:'仅看相同重复'}).map(([value,label])=>node('option',{value,selected:auditFilter===value},label)));
+    let auditPage=0;
+    const draw=()=>{
+        const issues=inspectRules(settings),byFrom=new Map(issues.map(x=>[x.from,x]));
+        const conflicts=issues.filter(x=>x.kind==='conflict'),duplicates=issues.filter(x=>x.kind==='duplicate');
+        summary.textContent=`全库：${conflicts.length} 个冲突原词（${conflicts.filter(x=>x.activeConflict).length} 个当前启用冲突）；${duplicates.length} 个相同重复原词。相同重复仅提示，不影响匹配结果。`;
+        const rows=settings.groups.flatMap(g=>g.rules.map(r=>({g,r,issue:byFrom.get(r.from)}))).filter(({g,r,issue})=>
+            (auditFilter==='all'||issue?.kind===auditFilter)&&[g.name,r.from,r.to].some(x=>x.toLocaleLowerCase().includes(allSearch.toLocaleLowerCase())));
+        const pages=Math.max(1,Math.ceil(rows.length/60));auditPage=Math.min(auditPage,pages-1);
+        results.replaceChildren(node('p',{},`检索到 ${rows.length} 条 · 第 ${auditPage+1}/${pages} 页`));
+        rows.slice(auditPage*60,auditPage*60+60).forEach(({g,r,issue})=>{
+            const state=issue?.kind==='conflict'?(issue.activeConflict?'⚠ 冲突':'⚠ 潜在冲突（部分已停用）'):issue?'重复 · 仅提示':'无同名冲突';
+            results.append(node('div',{class:`wr-audit-row ${issue?.kind==='conflict'?'wr-conflict-row':''}`},
+                node('b',{},`${r.from} → ${r.to||'〔删除〕'}`),node('small',{},`${g.name} · ${g.enabled&&r.enabled?'启用':'停用'} · ${state}`),
+                ...(issue?[node('small',{},issue.winner?`当前生效：${issue.winner.group} → ${issue.winner.to||'〔删除〕'}`:'当前没有启用项')]:[]),
+                button('定位到分类',()=>{selected=g.id;search=r.from;page=0;tab='词库';render();})));
+        });
+        results.append(node('div',{class:'wr-row'},button('上一页',()=>{auditPage=Math.max(0,auditPage-1);draw();}),button('下一页',()=>{auditPage=Math.min(pages-1,auditPage+1);draw();})));
+    };
+    filter.addEventListener('change',()=>{auditFilter=filter.value;auditPage=0;draw();});
+    body.append(node('p',{},'检查所有分类，包括停用项。相同原词与替换词属于重复；相同原词对应不同替换词属于冲突。长词包含短词按长词优先，不作为同名冲突。'),
+        field(allSearch,'搜索全部分类、原词、替换词',v=>{allSearch=v;auditPage=0;draw();}),filter,summary,results);draw();
 }
 function renderPreview(body) {
     const input=node('textarea',{class:'text_pole',rows:7,placeholder:'粘贴一段文字，查看替换结果；不会修改聊天。'});
@@ -147,7 +204,7 @@ function renderPreview(body) {
     body.append(node('p',{},'替换结果不会被同一次词库匹配再次处理；重复原词以后面的分类为准。特殊句式规则仍在词库前后处理。'),
         input,node('b',{},'替换结果'),output,hits,node('h4',{},'保护词'),exceptions,
         node('small',{},'保护词和代码块会原样保留。普通文本中的名字、链接等仍可能被单字规则影响。'),
-        node('p',{},runner.conflicts.length?`同名规则覆盖：${runner.conflicts.join('、')}`:'当前没有同名原词冲突。'));
+        node('p',{},runner.conflicts.length?`⚠ 同名不同替换：${runner.conflicts.join('、')}，可在全库检索与检查中核对。`:'当前没有同名不同替换的冲突。'));
 }
 function renderBackup(body) {
     const file=node('input',{type:'file',accept:'.json,application/json'});
@@ -191,7 +248,7 @@ function renderHistory(body) {
         undo={chat:c.chat,chatId:c.getCurrentChatId(),records};historyPlan=null;apply.disabled=true;
         await c.saveChat();status.textContent=`已处理 ${records.length} 条消息；可在本页撤销。`;
     },{disabled:true});
-    body.append(node('p',{},'只在你手动预览并确认后改写历史正文；不会修改角色卡、世界书、推理区和未选中的 swipe。'),
+    body.append(node('p',{class:'wr-conflict'},'此页是手动永久改写工具，会修改聊天文件原文。日常自动替换无需使用此页；它只改变显示与模型输入。确认应用前会下载原文备份。'),
         node('label',{class:'wr-check'},user,'同时处理自己的消息（默认只处理 AI）'),
         button('预览当前聊天',()=>{
             const c=context();if(c.streamingProcessor && !c.streamingProcessor.isFinished)throw new Error('请等待回复生成结束。');
@@ -211,15 +268,6 @@ function renderHistory(body) {
             for(const r of undo.records){r.message.mes=r.original;if(r.originalSwipe!==undefined)r.message.swipes[r.swipeId]=r.originalSwipe;c.updateMessageBlock(r.id,r.message);}
             await c.saveChat();undo=null;historyPlan=null;apply.disabled=true;status.textContent='已撤销上次历史处理。';
         }),result);
-}
-async function onMessage(id, kind) {
-    const c=context(), message=c.chat[Number(id)];
-    if(!settings.enabled||!message||message.is_system)return;
-    if(kind==='edit'&&!settings.edited)return;
-    if(kind!=='edit'&&(message.is_user?!settings.user:!settings.assistant))return;
-    const changed=replaceMessage(message,runner);if(!changed)return;
-    c.updateMessageBlock(Number(id),message);
-    await c.saveChat();
 }
 function installAPI() {
     globalThis.STWordReplacer=Object.freeze({
@@ -243,7 +291,7 @@ export function mountEntrypoints() {
             node('div',{class:'inline-drawer-icon fa-solid fa-circle-chevron-down down'}));
         const content=node('div',{class:'inline-drawer-content'},
             button('打开词库管理',()=>openManager()),
-            node('small',{},'v1.0.1 · 分类词库、批量改词、预览与备份'),
+            node('small',{},'v1.1.0 · 保留原文 · 跨分类复制 · 全库检查'),
             node('small',{},'也可从聊天输入区旁的魔法棒打开词库管理。'));
         host.append(node('div',{id:'wr-settings',class:'wr-settings'},node('div',{class:'inline-drawer'},header,content)));
     }
@@ -282,7 +330,7 @@ export function initialize() {
     });
     selectionButton.addEventListener('mousedown',e=>e.preventDefault());
     const types=c.eventTypes??c.event_types;
-    for(const [event,kind] of [[types.MESSAGE_RECEIVED,'assistant'],[types.MESSAGE_SENT,'user'],[types.MESSAGE_EDITED,'edit']])if(event)c.eventSource.on(event,protect(id=>onMessage(id,kind)));
+    runtime=installRuntime(context,()=>settings,()=>runner,{onError:report});
     if(types.CHAT_CHANGED)c.eventSource.on(types.CHAT_CHANGED,()=>{historyPlan=null;undo=null;selectionButton.hidden=true;});
     installAPI();
 }
