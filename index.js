@@ -126,7 +126,10 @@ function renderSettings(body) {
         checkbox('保护代码块',settings.protectCode,v=>{settings.protectCode=v;remember();}));
     controls.append(button('应用推荐配置',()=>{Object.assign(settings,{enabled:true,assistant:true,user:false,edited:true,display:true,prompt:true,protectCode:true});remember();render();}));
     const explanation=node('p',{class:'wr-explainer'},'自动替换保留聊天文件原文。默认只处理 AI 正文，显示与发送给模型时都生效；编辑后也会刷新。作用范围可按需勾选。');
-    content.append(node('h4',{},'处理哪些消息'),controls,node('h4',{},'如何生效'),advanced,explanation);
+    const frontendHint=runtime?.nativeFormatting
+        ?'含 HTML 或交互界面的消息在重新进入聊天时应用词库改动，避免中断正在运行的界面。'
+        :'当前 ST 缺少新版显示接口：含 HTML 或交互界面的消息暂不替换显示，普通消息照常处理。更新 ST 后可同时处理正文与界面消息。';
+    content.append(node('h4',{},'处理哪些消息'),controls,node('h4',{},'如何生效'),advanced,explanation,node('p',{class:'wr-explainer'},frontendHint));
 }
 function renderDictionary(body) {
     body.append(node('div',{class:'wr-section-head wr-library-actions'},
@@ -575,7 +578,7 @@ export function mountEntrypoints() {
             node('div',{class:'inline-drawer-icon fa-solid fa-circle-chevron-down down'}));
         const content=node('div',{class:'inline-drawer-content'},
             button('打开词库管理',()=>openManager()),
-            node('small',{},'v1.1.5 · 分类词库 · 句段模板 · 冲突检查'),
+            node('small',{},'v1.1.6 · 分类词库 · 句段模板 · 冲突检查'),
             node('small',{},'也可从聊天输入区旁的魔法棒打开词库管理。'));
         host.append(node('div',{id:'wr-settings',class:'wr-settings'},node('div',{class:'inline-drawer'},header,content)));
     }

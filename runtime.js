@@ -39,25 +39,84 @@ export function transformPrompt(messages, settings, runner, {sourceChat, reasoni
 }
 export function installRuntime(getContext,getSettings,getRunner,{loadNativeRegex=()=>import('../../regex/engine.js'),onError=console.error}={}) {
     let timer=null, regexPromise;
+    const c=getContext(),types=c.eventTypes??c.event_types??{};
+    const formatter=c.messageFormatter;
+    const nativeFormatting=typeof formatter?.addHook==='function'&&!!formatter.stage?.BEFORE_REGEX;
+    const formatted=new Map(),legacyRendered=new WeakMap(),editing=new Set();
+    const sourceText=m=>typeof m.extra?.display_text==='string'?m.extra.display_text:m.mes;
+    const transform=(input,meta)=>{
+        const settings=getSettings(),source=getContext().chat[meta.messageId];
+        if(meta.isReasoning||!settings.display||editing.has(Number(meta.messageId)))return input;
+        const message={is_system:meta.isSystem||source?.is_system,is_user:meta.isUser??source?.is_user,extra:source?.extra};
+        return scopeAllows(settings,message)?getRunner().run(input).text:input;
+    };
+    if(nativeFormatting){
+        // 在 ST 的 Markdown / 前端渲染之前处理正文，不再覆写其他扩展生成的 DOM。
+        formatter.addHook((input,meta)=>{
+            if(meta.isReasoning)return input;
+            try{
+                const output=transform(input,meta),ctx=getContext(),id=Number(meta.messageId),message=ctx.chat[id];
+                if(message&&Number.isInteger(id)&&id>=0)formatted.set(id,{chat:ctx.chat,message,source:sourceText(message),input,output,meta});
+                return output;
+            }catch(error){onError(error);return input;}
+        },{stage:formatter.stage.BEFORE_REGEX,order:formatter.order?.EARLY??10});
+        // MESSAGE_EDITED 在 ST 渲染编辑结果之前发出；关闭该选项时仅跳过这次编辑。
+        if(types.MESSAGE_EDITED)c.eventSource.on(types.MESSAGE_EDITED,id=>{if(!getSettings().edited)editing.add(Number(id));});
+        if(types.MESSAGE_UPDATED)c.eventSource.on(types.MESSAGE_UPDATED,id=>editing.delete(Number(id)));
+        if(types.CHAT_CHANGED)c.eventSource.on(types.CHAT_CHANGED,()=>{
+            const ctx=getContext();
+            for(const [id,record] of formatted)if(record.chat!==ctx.chat||record.message!==ctx.chat[id])formatted.delete(id);
+            editing.clear();
+        });
+    }
+    const hasFrontend=(el,input)=>
+        /<!doctype\b|<\/?[a-z][^>]*>/i.test(input??'')||
+        !!el?.querySelector('iframe,object,embed,script,style,custom-style')||
+        [...(el?.querySelectorAll('pre code')??[])].some(code=>/<\/?[a-z][^>]*>/i.test(code.textContent));
     const render=id=>{
-        const c=getContext(),m=c.chat[Number(id)];if(!m)return;
-        const el=document.querySelector(`#chat .mes[mesid="${Number(id)}"]`);
-        if(el?.querySelector('.edit_textarea'))return;
-        c.updateMessageBlock(Number(id),displayCopy(m,getSettings(),getRunner()));
+        id=Number(id);
+        const ctx=getContext(),m=ctx.chat[id];if(!m)return;
+        const el=document.querySelector(`#chat .mes[mesid="${id}"]`);
+        if(!el||el.querySelector('.edit_textarea,.reasoning_edit_textarea'))return;
+        const input=sourceText(m);
+        // 修改词库时保留正在运行的界面；它们在 ST 下次正常渲染时应用新设置。
+        // 旧版 ST 没有格式化接口，同样不抢占 HTML / iframe 楼层。
+        if(hasFrontend(el,input))return;
+        if(nativeFormatting){
+            const previous=formatted.get(id);
+            if(previous?.chat===ctx.chat&&previous.message===m&&previous.source===input){
+                if(transform(previous.input,previous.meta)===previous.output)return;
+            }else if(displayCopy(m,getSettings(),getRunner())===m)return;
+            // 必须传原文。格式化 hook 只处理一次，避免 A→B、B→C 串改。
+            ctx.updateMessageBlock(id,m);
+        }else{
+            const copy=displayCopy(m,getSettings(),getRunner()),output=sourceText(copy),previous=legacyRendered.get(el);
+            const current=previous?.chat===ctx.chat&&previous.message===m&&previous.source===input;
+            if(current?previous.output===output:copy===m)return;
+            ctx.updateMessageBlock(id,copy);
+            legacyRendered.set(el,{chat:ctx.chat,message:m,source:input,output});
+        }
     };
     const refresh=()=>{
         clearTimeout(timer);
         timer=setTimeout(()=>{document.querySelectorAll('#chat .mes[mesid]').forEach(el=>{try{render(Number(el.getAttribute('mesid')));}catch(e){onError(e);}});},120);
     };
-    const c=getContext(),types=c.eventTypes??c.event_types;
-    for(const key of ['CHARACTER_MESSAGE_RENDERED','USER_MESSAGE_RENDERED','MESSAGE_SWIPED'])if(types[key])c.eventSource.on(types[key],id=>{
-        // MESSAGE_SWIPED 可在 ST 自己的重绘前发出，下一任务再刷新。
-        setTimeout(()=>{try{render(id);}catch(e){onError(e);}},0);
-    });
-    if(types.MESSAGE_UPDATED)c.eventSource.on(types.MESSAGE_UPDATED,id=>{if(getSettings().edited)setTimeout(()=>{try{render(id);}catch(e){onError(e);}},0);});
-    for(const key of ['CHAT_CHANGED','MORE_MESSAGES_LOADED'])if(types[key])c.eventSource.on(types[key],refresh);
-    const chat=document.getElementById('chat');
-    if(chat){const observer=new window.MutationObserver(refresh);observer.observe(chat,{childList:true});}
+    if(!nativeFormatting){
+        for(const key of ['CHARACTER_MESSAGE_RENDERED','USER_MESSAGE_RENDERED','MESSAGE_SWIPED'])if(types[key])c.eventSource.on(types[key],id=>{
+            // ST 刚重绘的普通楼层需要重新应用；不沿用上一版 DOM 的缓存。
+            const el=document.querySelector(`#chat .mes[mesid="${Number(id)}"]`);
+            if(el)legacyRendered.delete(el);
+            setTimeout(()=>{try{render(id);}catch(e){onError(e);}},0);
+        });
+        if(types.MESSAGE_UPDATED)c.eventSource.on(types.MESSAGE_UPDATED,id=>{if(getSettings().edited){
+            const el=document.querySelector(`#chat .mes[mesid="${Number(id)}"]`);
+            if(el)legacyRendered.delete(el);
+            setTimeout(()=>{try{render(id);}catch(e){onError(e);}},0);
+        }});
+        for(const key of ['CHAT_CHANGED','MORE_MESSAGES_LOADED'])if(types[key])c.eventSource.on(types[key],refresh);
+        const chat=document.getElementById('chat');
+        if(chat){const observer=new window.MutationObserver(refresh);observer.observe(chat,{childList:true});}
+    }
     globalThis.STWordReplacerPrompt=async(messages,_size,_abort,type)=>{
         if(!getSettings().prompt||!getSettings().enabled)return;
         const c=getContext();
@@ -65,5 +124,5 @@ export function installRuntime(getContext,getSettings,getRunner,{loadNativeRegex
         const nativeRegex=regexPromise?await regexPromise:null;
         transformPrompt(messages,getSettings(),getRunner(),{sourceChat:c.chat,reasoning:c.powerUserSettings?.reasoning,expand:c.substituteParams??(s=>s),nativeRegex,type});
     };
-    refresh();return {refresh,render};
+    refresh();return {refresh,render,nativeFormatting};
 }
