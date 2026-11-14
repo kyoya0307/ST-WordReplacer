@@ -2,6 +2,7 @@ import { createSettings, validateSettings, compile, parseBatch, inspectRules, pl
 import { CONTEXT_RULES, CONTEXT_MATCH_TEXT, createContextOptions, validateContextOptions } from './legacy.js';
 import { installRuntime } from './runtime.js';
 import { SENTENCE_PRESETS, sentenceTemplate, validateSentenceRules } from './sentences.js';
+import { TEMPLATE_SCOPES, templateRule } from './templates.js';
 
 const KEY = 'st_word_replacer';
 let settings, runner, selected, dialog, pane, status, search = '', page = 0, tab = '词库';
@@ -13,6 +14,7 @@ let refreshPreview=null;
 const matchesRule=(rule,query)=>[rule.from,rule.to].some(value=>value.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
 let contextSearch='', contextInput='', contextTestRule='all';
 let sentenceInput='';
+let sentenceDraft=null;
 const context = () => SillyTavern.getContext();
 const node = (tag, attrs = {}, ...children) => {
     const el = document.createElement(tag);
@@ -159,6 +161,10 @@ function renderDictionary(body) {
         button('删除分类',()=>{if(!confirm(`删除“${g.name}”及其中 ${g.rules.length} 个词条？`))return;settings.groups=settings.groups.filter(x=>x!==g);selected=null;search='';page=0;selectedRules.clear();remember();render();})),
         node('small',{},'仅同名原词受分类顺序影响：靠后的已启用分类生效。'));
     content.append(node('div',{class:'wr-category-heading'},node('b',{},`${g.name}${g.enabled?'':' · 已停用'}`),categoryTools));
+    const deletionScope=node('select',{class:'text_pole','aria-label':'本分类空替换值的删除范围'},...Object.entries({word:'只删除匹配文字',...TEMPLATE_SCOPES}).map(([value,label])=>node('option',{value,selected:value===(g.deleteScope??'word')},label)));
+    deletionScope.addEventListener('change',protect(()=>{g.deleteScope=deletionScope.value;remember();render();}));
+    categoryTools.append(node('label',{},'替换词留空时',deletionScope),node('small',{},'仅影响本分类的空替换词条；非空替换和其他分类不变。复制到其他分类后，空替换采用目标分类的删除范围。'));
+    if(g.deleteScope&&g.deleteScope!=='word')content.append(node('p',{class:'wr-explainer'},`本分类空替换值：${TEMPLATE_SCOPES[g.deleteScope]}。词条和分类开关仍可分别控制；先删句段，再运行普通替换。`));
     const from=field(selectedText,'原词（必填）',()=>{}); selectedText='';
     const to=field('','替换为（留空即删除）',()=>{});
     content.append(node('div',{class:'wr-row wr-add'},from,node('span',{},'→'),to,button('添加 / 更新',()=>{
@@ -270,7 +276,7 @@ function renderContextual(body) {
             action.addEventListener('change',protect(()=>{config.replacement=action.value==='original'?null:replacement.value;replacement.disabled=config.replacement===null;remember();preview();}));
             cards.append(node('article',{class:'wr-context-card','data-context-id':rule.id},
                 node('div',{class:'wr-row'},checkbox(rule.name,config.enabled,v=>{config.enabled=v;remember();preview();}),node('small',{},rule.stage==='before'?'词库之前':'词库之后')),
-                node('p',{},rule.description),node('small',{},`保护条件：${rule.protection}`),
+                node('p',{},rule.description),node('small',{},`保护条件：${rule.protection}`),node('p',{class:'wr-rule-description'},`可试用文本：${rule.sample}`),
                 node('details',{},node('summary',{},'调整处理方式'),node('p',{},`识别范围：${CONTEXT_MATCH_TEXT[rule.id]}`),node('p',{},`默认：${rule.action}`),action,replacement,
                     node('small',{},'固定文字会替换整个命中片段，包括匹配到的主语或前缀；不解析 $1 等正则写法。匹配和保护条件继续有效。'),
                     button('恢复本项默认',()=>{settings.contextOptions.rules[rule.id]={enabled:true,replacement:null};remember();draw();preview();})),
@@ -286,9 +292,8 @@ function renderContextual(body) {
     nouns.addEventListener('input',protect(()=>{
         settings.contextOptions=validateContextOptions({...settings.contextOptions,nouns:nouns.value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean)});remember();draw();preview();
     }));
-    body.append(node('p',{class:'wr-explainer'},'特殊句式按前后文字和固定条件判断，不是无条件替换。无需填写正则：选择规则、调整处理方式，再用完整句子测试。'),
-        checkbox('启用特殊句式',settings.contextual,v=>{settings.contextual=v;remember();render();}),
-        renderSentenceRules(),
+    const advanced=node('details',{class:'wr-advanced'},node('summary',{},'内置句式与保护设置（进阶）'),
+        node('p',{},'这里是原有的 7 组固定规则。一般保留当前设置即可；需要改它们的处理方式时再展开。下方的示例会展示哪些普通表达应当保留。'),
         field(contextSearch,'搜索句式名称、用途或保护条件',v=>{contextSearch=v;draw();}),cards,
         node('details',{},node('summary',{},'调整亲属语境保护表'),
             node('p',{},'名词保护表用于“带去的句式”和“亲属语境判断”：匹配片段后紧接这些名词时，跳过相应规则。'),nouns,
@@ -296,46 +301,135 @@ function renderContextual(body) {
             button('恢复保护表默认值',()=>{const defaults=createContextOptions();settings.contextOptions.nouns=defaults.nouns;settings.contextOptions.verbs=defaults.verbs;remember();render();})),
         node('p',{},'保护条件只约束对应规则，其他句式和普通词库仍会继续处理。需要某段文字始终保持原样时，请到“预览与保护”添加完整保护词。'),testBox,
         node('small',{},'默认执行顺序与原规则一致；这些是文字模式判断，不能理解所有叙事语境。请同时测试希望替换和希望保留的句子。'));
+    body.append(node('div',{class:'wr-section-head'},node('div',{},node('h3',{},'按句子删内容'),node('p',{},'选择一个例子，填入关键词，先看效果再保存。')),
+        checkbox('启用特殊句式',settings.contextual,v=>{settings.contextual=v;remember();render();})),
+        ...(!settings.enabled||!settings.contextual?[node('p',{class:'wr-explainer'},'句式处理已暂停。下面仍可试用；要用于聊天，请同时开启“启用替换”和“启用特殊句式”。')]:[]),
+        renderSentenceRules(),advanced);
     draw();preview();
 }
 function renderSentenceRules() {
-    const panel=node('details',{class:'wr-sentences',open:settings.sentenceRules.length>0},node('summary',{},'按关键词删除句段（无需正则）'));
-    const keyword=field('','例如：声音很平',()=>{});
-    const preset=node('select',{class:'text_pole','aria-label':'新规则的句段范围'},...Object.entries(SENTENCE_PRESETS).map(([value,label])=>node('option',{value},label)));
-    panel.append(node('p',{},'填写关键词，删除包含它的句段。默认从上一个标点之后删到句末，逗号、冒号也可作为起点；选择“完整句子”则不在逗号、冒号处分句。'),
-        node('p',{},'这些规则先于普通词库和内置句式运行。换行始终分段并保留；末尾没有结束标点时删到文本末尾。涉及保护词或受保护代码块的句段会跳过删除。'),
-        node('div',{class:'wr-row'},keyword,preset,button('添加句段规则',()=>{
-            const rules=validateSentenceRules([...settings.sentenceRules,{id:uid(),...sentenceTemplate(keyword.value.trim(),preset.value)}]);
-            settings.sentenceRules=rules;remember();render();
-        })));
-    for(const rule of settings.sentenceRules){
-        const term=field(rule.keyword,'包含的关键词',()=>{});term.setAttribute('aria-label','句段关键词');
-        const starts=field(rule.startChars,'起点标点，每个字符单独生效',()=>{});starts.maxLength=100;starts.setAttribute('aria-label','句段起点标点');
-        const ends=field(rule.endChars,'结束标点，每个字符单独生效',()=>{});ends.maxLength=100;ends.setAttribute('aria-label','句段结束标点');
-        const mode=node('select',{class:'text_pole','aria-label':'已有规则的句段范围'},...Object.entries({...SENTENCE_PRESETS,custom:'自定义边界'}).map(([value,label])=>node('option',{value},label)));
-        const standard=sentenceTemplate('');mode.value=rule.endChars===standard.endChars?(rule.startChars===standard.startChars?'punctuation':rule.startChars===standard.endChars?'sentence':'custom'):'custom';
-        mode.addEventListener('change',()=>{if(mode.value!=='custom'){const t=sentenceTemplate('',mode.value);starts.value=t.startChars;ends.value=t.endChars;}});
-        starts.addEventListener('input',()=>mode.value='custom');ends.addEventListener('input',()=>mode.value='custom');
-        panel.append(node('article',{class:'wr-sentence-rule'},checkbox('启用这条规则',rule.enabled,v=>{rule.enabled=v;remember();render();}),
-            node('div',{class:'wr-row'},term,mode),
-            node('details',{},node('summary',{},'自定义起止标点'),node('label',{},'从这些标点之后开始',starts),node('label',{},'遇到这些标点结束（含结束标点）',ends),node('small',{},'每个字符分别作为边界，不填写正则。换行始终生效；留空表示只以换行或文本边缘为界。句号会将小数中的点也作为边界，需要时可移除英文点号。')),
-            button('保存规则',()=>{const updated=validateSentenceRules([{...rule,keyword:term.value.trim(),startChars:starts.value,endChars:ends.value}])[0];Object.assign(rule,updated);remember();render();}),
-            button('删除规则',()=>{settings.sentenceRules=settings.sentenceRules.filter(r=>r!==rule);remember();render();})));
-    }
-    const input=node('textarea',{class:'text_pole',rows:4,value:sentenceInput,placeholder:'粘贴完整段落，预览将被删除的范围。'});
+    const panel=node('section',{class:'wr-sentences'});
+    const examples=[
+        {title:'含某个词就删',caption:'词表里任意一个词出现，就删它所在的分句。',keywords:['草稿标记'],matchMode:'any',scope:'clause',respectProtection:true,input:'她点头，草稿标记出现在这里。',output:'她点头。'},
+        {title:'两个词同句出现',caption:'不分先后，逗号隔开也算；只出现一个不触发。',keywords:['声音','平'],matchMode:'all',scope:'clause',respectProtection:false,input:'她点头，声音传来，语调平静。',output:'她点头。'},
+        {title:'命中就删整句',caption:'连同一句里的其他分句一起删，到句末为止。',keywords:['重复说明'],matchMode:'any',scope:'sentence',respectProtection:true,input:'她进门，重复说明了一遍。她坐下。',output:'她坐下。'},
+    ];
+    const parseTerms=value=>value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+    const humanSummary=rule=>`${rule.matchMode==='all'?'同一句内全部出现':'出现任意一个词'} → ${rule.scope==='sentence'?'删除整句话':rule.matchMode==='all'?'删掉这些词所在的分句及中间内容':'删除这个词所在的分句'}`;
+    const titleFor=rule=>rule.name||rule.keywords?.join(' + ')||rule.keyword;
+    const editor=node('div',{class:'wr-editor-host'}),list=node('div',{class:'wr-template-list'}),count=node('small',{});
+    const allPreview=node('details',{class:'wr-advanced'},node('summary',{},'用一段话检查全部规则'));
+    const input=node('textarea',{class:'text_pole',rows:4,value:sentenceInput,'aria-label':'全部规则测试文本',placeholder:'粘贴完整段落，查看所有已保存规则的效果。'});
     const marked=node('div',{class:'wr-output wr-sentence-highlight'}),output=node('pre',{class:'wr-output'}),note=node('p',{});
+    const markResult=(container,text,result)=>{
+        container.replaceChildren();let pos=0;
+        for(const span of result.deletions??[]){container.append(document.createTextNode(text.slice(pos,span.start)),node('mark',{title:`将删除：${span.keywords.join('、')}`},text.slice(span.start,span.end)));pos=span.end;}
+        container.append(document.createTextNode(text.slice(pos)));
+    };
     const preview=()=>{
-        const result=runner.run(sentenceInput);marked.replaceChildren();let pos=0;
-        for(const span of result.deletions??[]){marked.append(document.createTextNode(sentenceInput.slice(pos,span.start)),node('mark',{title:`将删除：${span.keywords.join('、')}`},span.text));pos=span.end;}
-        marked.append(document.createTextNode(sentenceInput.slice(pos)));output.textContent=result.text;
-        note.textContent=!settings.enabled||!settings.contextual?'相关总开关已关闭，句段删除暂停。':`标出的 ${result.deletions?.length??0} 处会删除。下方结果还会应用当前普通词库和内置句式。`;
+        const result=runner.run(sentenceInput);markResult(marked,sentenceInput,result);output.textContent=result.text||(sentenceInput?'（全部删除）':'');
+        note.textContent=!settings.enabled?'替换总开关已关闭。':`划线的 ${result.deletions?.length??0} 处会删除；结果同时应用普通词库和已启用的内置句式。`;
     };
     input.addEventListener('input',()=>{sentenceInput=input.value;preview();});
-    panel.append(node('h4',{},'删除范围预览'),input,note,marked,node('b',{},'全部规则处理后的结果'),output);preview();
-    return panel;
+    allPreview.append(node('p',{},'这里测试已保存的配置，不会改写聊天。'),button('载入最新 AI 回复',()=>{
+        const message=context().chat.findLast(m=>!m.is_user&&!m.is_system&&typeof m.mes==='string');
+        if(!message)throw new Error('当前聊天没有 AI 正文。');sentenceInput=message.mes;input.value=sentenceInput;preview();
+    }),input,note,marked,node('b',{},'处理后'),output);
+    const beginEdit=(rule=null)=>{
+        sentenceDraft=rule?{id:rule.id??null,name:rule.name??rule.title??'',keywords:rule.keywords.join('\n'),matchMode:rule.matchMode,scope:rule.scope,respectProtection:rule.respectProtection!==false,enabled:rule.enabled!==false,test:rule.input??''}
+            :{id:null,name:'',keywords:'',matchMode:'any',scope:'clause',respectProtection:true,enabled:true,test:''};
+        drawEditor();editor.scrollIntoView?.({block:'start',behavior:'smooth'});
+    };
+    const drawEditor=()=>{
+        editor.replaceChildren();if(!sentenceDraft)return;
+        const draft=sentenceDraft;
+        const form=node('section',{class:'wr-rule-editor'});
+        const words=node('textarea',{class:'text_pole',rows:3,value:draft.keywords,'aria-label':'规则关键词',placeholder:'每行写一个词，例如：\n声音\n平'});
+        const match=node('select',{class:'text_pole','aria-label':'怎样才触发'},node('option',{value:'any'},'任意一个词出现就触发'),node('option',{value:'all'},'所有词在同一句出现才触发'));match.value=draft.matchMode;
+        const scope=node('select',{class:'text_pole','aria-label':'删除多少'},node('option',{value:'clause'},'只删命中的分句（逗号隔开的部分）'),node('option',{value:'sentence'},'删除整句话（直到句末）'));scope.value=draft.scope;
+        const name=field(draft.name,'可选，例如：声音描写',value=>{draft.name=value;});name.setAttribute('aria-label','规则名称');
+        const protection=checkbox('遇到保护词或代码块时跳过',draft.respectProtection,v=>{draft.respectProtection=v;tryDraft();});
+        const test=node('textarea',{class:'text_pole',rows:4,value:draft.test,'aria-label':'当前规则测试文本',placeholder:'在这里写一句话，边改边看结果。'});
+        const explanation=node('p',{class:'wr-rule-description'}),testStatus=node('small',{role:'status'});
+        const deletion=node('div',{class:'wr-output wr-sentence-highlight'}),after=node('pre',{class:'wr-output wr-result'});
+        const save=button(draft.id?'保存修改':'保存并启用',()=>{
+            const rule=validateSentenceRules([{id:draft.id??uid(),...templateRule(parseTerms(draft.keywords),draft.matchMode,draft.scope),name:draft.name,respectProtection:draft.respectProtection,enabled:draft.id?draft.enabled:true}])[0];
+            const index=settings.sentenceRules.findIndex(r=>r.id===draft.id);
+            if(draft.id&&index<0)throw new Error('这条规则已不存在，请重新选择。');
+            const next=[...settings.sentenceRules];if(index>=0)next[index]=rule;else next.push(rule);
+            settings.sentenceRules=validateSentenceRules(next);sentenceDraft=null;remember();drawEditor();drawList();preview();list.scrollIntoView?.({block:'nearest'});
+        },{class:'menu_button wr-button wr-primary'});
+        const tryDraft=()=>{
+            const keywords=parseTerms(draft.keywords);save.disabled=!keywords.length;
+            explanation.textContent=keywords.length?humanSummary(draft):'先写下想删掉的关键词，再选择触发方式和删除范围。';
+            try {
+                if(!keywords.length){deletion.textContent=draft.test;after.textContent=draft.test;testStatus.textContent='填写关键词后，这里会自动显示效果。';return;}
+                const isolated=structuredClone(settings);isolated.enabled=true;isolated.contextual=true;isolated.groups=[];
+                for(const config of Object.values(isolated.contextOptions.rules))config.enabled=false;
+                isolated.sentenceRules=[{...templateRule(keywords,draft.matchMode,draft.scope),respectProtection:draft.respectProtection}];
+                const result=compile(isolated).run(draft.test);markResult(deletion,draft.test,result);after.textContent=result.text||(draft.test?'（全部删除）':'');
+                testStatus.textContent=!draft.test?'输入一句话，或点“生成测试句”。':result.deletions?.length?`会删除 ${result.deletions.length} 处，划线部分包含要移除的标点。`:'没有触发：检查关键词是否齐全、是否在同一句，或是否命中保护词。';
+            } catch(error){save.disabled=true;testStatus.textContent=error.message;deletion.textContent=draft.test;after.textContent='';}
+        };
+        words.addEventListener('input',()=>{draft.keywords=words.value;tryDraft();});
+        match.addEventListener('change',()=>{draft.matchMode=match.value;tryDraft();});
+        scope.addEventListener('change',()=>{draft.scope=scope.value;tryDraft();});
+        test.addEventListener('input',()=>{draft.test=test.value;tryDraft();});
+        const formFields=node('div',{class:'wr-template-form'},
+            node('label',{},node('b',{},'1 · 遇到哪些词？'),node('small',{},'每行一个。填普通文字，不需要正则。'),words),
+            node('label',{},'怎样才触发',match),node('label',{},node('b',{},'2 · 删除多少？'),scope),explanation,
+            node('details',{class:'wr-more-options'},node('summary',{},'更多设置：名称与保护'),node('label',{},'规则名称',name),protection,node('small',{},'取消勾选后，即使命中保护词或代码块也会删除。')));
+        const sandbox=node('div',{class:'wr-rule-sandbox'},node('div',{class:'wr-section-head'},node('b',{},'3 · 先试一句'),button('生成测试句',()=>{
+            const terms=parseTerms(draft.keywords);draft.test=terms.length?`保留开头，${draft.matchMode==='all'?terms.join('，'):terms[0]}，保留结尾。`:examples[0].input;test.value=draft.test;tryDraft();
+        })),test,node('small',{},'只试当前规则；保存后按总开关生效。'),node('b',{},'将删除（划线部分）'),deletion,node('b',{},'处理后'),after,testStatus);
+        form.append(node('div',{class:'wr-section-head'},node('h4',{},draft.id?'编辑删除规则':'新增删除规则'),node('span',{class:'wr-badge'},'尚未保存')),
+            node('div',{class:'wr-editor-grid'},formFields,sandbox),
+            node('div',{class:'wr-editor-actions'},button('取消',()=>{sentenceDraft=null;drawEditor();}),save));editor.append(form);tryDraft();
+    };
+    const drawList=()=>{
+        const rules=settings.sentenceRules.filter(r=>r.keywords);count.textContent=`${rules.length} 条规则 · ${rules.filter(r=>r.enabled).length} 条开启`;
+        list.replaceChildren();
+        if(!rules.length)list.append(node('div',{class:'wr-empty'},node('b',{},'还没有自定义删除规则'),node('small',{},'从下面的例子开始，修改关键词后保存即可。')));
+        for(const rule of rules){
+            const card=node('article',{class:`wr-sentence-rule wr-template-rule${rule.enabled?'':' wr-rule-off'}`},
+                node('div',{class:'wr-section-head'},checkbox(titleFor(rule),rule.enabled,v=>{rule.enabled=v;if(sentenceDraft?.id===rule.id)sentenceDraft.enabled=v;remember();drawList();preview();}),node('span',{class:'wr-badge'},rule.scope==='sentence'?'删整句':'删分句')),
+                node('div',{class:'wr-keyword-chips'},...rule.keywords.slice(0,8).map(word=>node('span',{},word)),...(rule.keywords.length>8?[node('small',{},`另 ${rule.keywords.length-8} 个词`)]:[])),
+                node('p',{class:'wr-rule-description'},humanSummary(rule)),
+                node('div',{class:'wr-section-head'},node('small',{},rule.respectProtection?'遵守保护词和代码块保护':'命中就删，不受保护词和代码块保护限制'),node('div',{class:'wr-row'},
+                    button('编辑 / 试用',()=>beginEdit(rule)),button('删除',()=>{
+                        settings.sentenceRules=settings.sentenceRules.filter(r=>r!==rule);if(sentenceDraft?.id===rule.id){sentenceDraft=null;drawEditor();}remember();drawList();preview();
+                    },{'aria-label':`删除规则：${titleFor(rule)}`}))));list.append(card);
+        }
+    };
+    const gallery=node('div',{class:'wr-example-grid'},...examples.map((example,i)=>{
+        const card=button('',()=>beginEdit(example),{class:'menu_button wr-button wr-example-card','aria-label':`使用示例：${example.title}`});
+        card.append(node('span',{class:'wr-example-number'},`示例 ${i+1}`),node('strong',{},example.title),node('small',{},example.caption),
+            node('span',{class:'wr-example-words'},example.keywords.join(' ＋ ')),
+            node('span',{class:'wr-example-before'},example.input),node('span',{class:'wr-example-after'},`→ ${example.output}`),node('span',{class:'wr-example-use'},'用这个例子 ›'));return card;
+    }));
+    panel.append(node('div',{class:'wr-section-head wr-list-heading'},node('div',{},node('h4',{},'我的删除规则'),count),button('＋ 新增规则',()=>beginEdit(),{class:'menu_button wr-button wr-primary'})),list,editor,
+        node('h4',{},'从示例新建'),gallery,node('small',{class:'wr-gallery-note'},'点示例只会填入编辑区，保存后才生效。'),
+        node('details',{class:'wr-advanced'},node('summary',{},'逗号、句号和引号会怎么处理？'),node('div',{class:'wr-punctuation-examples'},
+            node('p',{},'删句首：草稿标记，后文。 → 后文。'),node('p',{},'删中间：前文，草稿标记，后文。 → 前文，后文。'),node('p',{},'删句尾：前文，草稿标记。 → 前文。')),
+            node('small',{},'逗号分开分句；句号、问号、感叹号、分号、省略号和换行分开句子。中英文标点均支持。保留换行；删掉整句时连句末标点一起删；只删一部分时保留成对引号和括号。英文点号也会分句。')),allPreview);
+    const legacy=node('details',{class:'wr-advanced'},node('summary',{},`旧版边界规则（${settings.sentenceRules.filter(r=>!r.keywords).length}）`),node('p',{},'保留旧版的自定义标点行为。新建规则建议使用上面的示例。'));
+    for(const rule of settings.sentenceRules.filter(r=>!r.keywords)){
+        const term=field(rule.keyword,'包含的关键词',()=>{});term.setAttribute('aria-label','句段关键词');
+        const starts=field(rule.startChars,'起点标点',()=>{});starts.maxLength=100;
+        const ends=field(rule.endChars,'结束标点',()=>{});ends.maxLength=100;
+        legacy.append(node('article',{class:'wr-sentence-rule'},checkbox('启用这条旧规则',rule.enabled,v=>{rule.enabled=v;remember();preview();}),
+            node('div',{class:'wr-template-form'},node('label',{},'关键词',term),node('label',{},'从这些标点之后开始',starts),node('label',{},'遇到这些标点结束',ends)),
+            button('保存旧规则',()=>{Object.assign(rule,validateSentenceRules([{...rule,keyword:term.value.trim(),startChars:starts.value,endChars:ends.value}])[0]);remember();preview();}),
+            button('删除旧规则',()=>{settings.sentenceRules=settings.sentenceRules.filter(r=>r!==rule);remember();render();})));
+    }
+    const term=field('','关键词',()=>{}),preset=node('select',{class:'text_pole','aria-label':'旧版新规则范围'},...Object.entries(SENTENCE_PRESETS).map(([value,label])=>node('option',{value},label)));
+    legacy.append(node('div',{class:'wr-row'},term,preset,button('添加旧版边界规则',()=>{settings.sentenceRules=validateSentenceRules([...settings.sentenceRules,{id:uid(),...sentenceTemplate(term.value.trim(),preset.value)}]);remember();render();})));
+    panel.append(legacy);drawEditor();drawList();preview();refreshPreview=preview;return panel;
 }
+
 function renderAudit(body) {
     const results=node('div',{}),summary=node('p',{});
+    const targetText=(rule,scope)=>rule.to||`〔${scope==='clause'?'删除分句':scope==='sentence'?'删除整句':'删除文字'}〕`;
     let auditPage=0;
     const draw=()=>{
         const issues=inspectRules(settings),byFrom=new Map(issues.map(x=>[x.from,x]));
@@ -348,13 +442,13 @@ function renderAudit(body) {
         rows.slice(auditPage*60,auditPage*60+60).forEach(({g,r,issue})=>{
             const state=issue?.kind==='conflict'?(issue.activeConflict?'⚠ 冲突':'⚠ 潜在冲突（部分已停用）'):issue?'重复 · 仅提示':'无同名冲突';
             results.append(node('div',{class:`wr-audit-row ${issue?.kind==='conflict'?'wr-conflict-row':''}`},
-                node('b',{},`${r.from} → ${r.to||'〔删除〕'}`),node('small',{},`${g.name} · ${g.enabled&&r.enabled?'启用':'停用'} · ${state}`),
-                ...(issue?[node('small',{},issue.winner?`当前生效：${issue.winner.group} → ${issue.winner.to||'〔删除〕'}`:'当前没有启用项')]:[]),
+                node('b',{},`${r.from} → ${targetText(r,g.deleteScope)}`),node('small',{},`${g.name} · ${g.enabled&&r.enabled?'启用':'停用'} · ${state}`),
+                ...(issue?[node('small',{},issue.winner?`当前生效：${issue.winner.group} → ${targetText(issue.winner,issue.winner.deleteScope)}`:'当前没有启用项')]:[]),
                 button('定位到分类',()=>{selected=g.id;search=r.from;page=0;tab='词库';render();})));
         });
         if(pages>1)results.append(node('div',{class:'wr-row'},button('上一页',()=>{auditPage=Math.max(0,auditPage-1);draw();}),button('下一页',()=>{auditPage=Math.min(pages-1,auditPage+1);draw();})));
     };
-    body.append(node('p',{},'只显示冲突词条，包括停用项造成的潜在冲突。相同原词对应不同的当前替换词才算冲突。无冲突词条和完全相同的重复项不列出。'),
+    body.append(node('p',{},'只显示冲突词条，包括停用项造成的潜在冲突。相同原词对应不同的替换词或删除范围时算冲突。无冲突词条和完全相同的重复项不列出。'),
         field(allSearch,'搜索全部分类、原词、替换词',v=>{allSearch=v;auditPage=0;draw();}),summary,results);draw();
 }
 function renderPreview(body) {
@@ -372,7 +466,7 @@ function renderPreview(body) {
     exceptions.addEventListener('input',protect(()=>{settings.exceptions=[...new Set(exceptions.value.split(/\r?\n/).filter(Boolean))];remember();preview();}));
     body.append(node('p',{},'替换结果不会被同一次词库匹配再次处理；重复原词以后面的分类为准。特殊句式规则仍在词库前后处理。'),
         input,node('b',{},'替换结果'),output,hits,node('h4',{},'保护词'),exceptions,
-        node('small',{},'保护词和代码块会原样保留。普通文本中的名字、链接等仍可能被单字规则影响。'),
+        node('small',{},'普通替换遵守保护词和代码块保护；句式模板可单独取消保护。普通文本中的名字、链接等仍可能被单字规则影响。'),
         node('p',{},runner.conflicts.length?`⚠ 同名不同替换：${runner.conflicts.join('、')}，可在冲突页中核对。`:'当前没有同名不同替换的冲突。'));
 }
 function renderBackup(body) {
@@ -390,10 +484,10 @@ function renderBackup(body) {
                 if(settings.groups.length+imported.groups.length>200)throw new Error('合并后分类过多。');
                 settings.groups.push(...imported.groups);settings.exceptions=[...new Set([...settings.exceptions,...imported.exceptions])];
             }
-            selected=null;search='';page=0;selectedRules.clear();remember();render();status.textContent='导入完成。';
+            selected=null;search='';page=0;sentenceDraft=null;selectedRules.clear();remember();render();status.textContent='导入完成。';
         }),node('hr'),button('恢复原始词库（先导出当前备份）',()=>{
             if(!confirm('恢复原始 124 条词库和默认开关？当前设置会先下载备份。'))return;
-            download(`ST-WordReplacer-before-reset-${stamp()}.json`,settings);settings=createSettings();selected=null;search='';page=0;selectedRules.clear();remember();render();
+            download(`ST-WordReplacer-before-reset-${stamp()}.json`,settings);settings=createSettings();selected=null;search='';page=0;sentenceDraft=null;selectedRules.clear();remember();render();
         }),node('p',{},'脚本型 JSON 含可执行代码，不能在此直接导入；此处仅接受本扩展的词库备份。'));
 }
 function renderHistory(body) {
@@ -448,7 +542,7 @@ function installAPI() {
             if(!g){if(settings.groups.length>=200)throw new Error('分类不能超过 200 个。');g={id:uid(),name:String(category).trim().slice(0,100)||'未命名分类',enabled:true,rules:[]};settings.groups.push(g);}
             upsert(g,from,to);remember();if(dialog.open)render();return true;
         },
-        import:data=>{settings=validateSettings(data);selected=null;search='';page=0;selectedRules.clear();remember();if(dialog.open)render();},
+        import:data=>{settings=validateSettings(data);selected=null;search='';page=0;sentenceDraft=null;selectedRules.clear();remember();if(dialog.open)render();},
     });
 }
 // 与 ST 内置 caption 扩展相同的设置标题和魔法棒条目结构。
@@ -460,7 +554,7 @@ export function mountEntrypoints() {
             node('div',{class:'inline-drawer-icon fa-solid fa-circle-chevron-down down'}));
         const content=node('div',{class:'inline-drawer-content'},
             button('打开词库管理',()=>openManager()),
-            node('small',{},'v1.1.3 · 分类词库 · 句段删除 · 冲突检查'),
+            node('small',{},'v1.1.4 · 分类词库 · 句段模板 · 冲突检查'),
             node('small',{},'也可从聊天输入区旁的魔法棒打开词库管理。'));
         host.append(node('div',{id:'wr-settings',class:'wr-settings'},node('div',{class:'inline-drawer'},header,content)));
     }

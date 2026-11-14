@@ -1,3 +1,4 @@
+import {validateTemplateRule,templateSpans,preservePairedMarks} from './templates.js';
 export const SENTENCE_ENDS='。.!！?？；;…';
 export const SENTENCE_STARTS='，,：:'+SENTENCE_ENDS;
 export const SENTENCE_PRESETS={punctuation:'上一个标点之后 → 句末',sentence:'完整句子（逗号不分句）'};
@@ -7,6 +8,7 @@ export function sentenceTemplate(keyword,preset='punctuation') {
 export function validateSentenceRules(rules=[]) {
     if(!Array.isArray(rules)||rules.length>200)throw new Error('句段删除规则最多 200 条。');
     return rules.map((r,index)=>{
+        if(r&&('keywords' in r||'matchMode' in r||'scope' in r))return validateTemplateRule(r,index);
         if(!r||typeof r.keyword!=='string'||!r.keyword.trim()||r.keyword.length>2000||/[\r\n]/.test(r.keyword))throw new Error('句段关键词不能为空、不能换行，最多 2000 字。');
         const out={id:typeof r.id==='string'?r.id:`sentence-${index}`,keyword:r.keyword,enabled:r.enabled!==false};
         for(const key of ['startChars','endChars']){
@@ -27,10 +29,11 @@ function includeClosingMarks(text,start,end) {
     }
     return end;
 }
-export function compileSentenceRules(rules) {
-    const compiled=validateSentenceRules(rules).filter(r=>r.enabled).map(r=>({...r,starts:new Set([...r.startChars,'\r','\n']),ends:new Set([...r.endChars,'\r','\n'])}));
+export function compileSentenceRules(rules,categoryRules=[]) {
+    const enabled=[...validateSentenceRules(rules),...validateSentenceRules(categoryRules)].filter(r=>r.enabled),templates=enabled.filter(r=>r.keywords);
+    const compiled=enabled.filter(r=>!r.keywords).map(r=>({...r,starts:new Set([...r.startChars,'\r','\n']),ends:new Set([...r.endChars,'\r','\n'])}));
     return function(input,protectedRanges=[]) {
-        const spans=[];
+        let spans=templateSpans(input,templates,protectedRanges);
         for(const rule of compiled){
             let cursor=0;
             while(cursor<input.length){
@@ -48,6 +51,7 @@ export function compileSentenceRules(rules) {
                 spans.push({start,end,keywords:[rule.keyword]});
             }
         }
+        if(templates.length)spans=preservePairedMarks(input,spans);
         spans.sort((a,b)=>a.start-b.start||a.end-b.end);
         const merged=[];
         for(const span of spans){
