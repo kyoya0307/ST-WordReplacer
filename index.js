@@ -1,4 +1,4 @@
-import { createSettings, validateSettings, compile, parseBatch, inspectRules, planPaste, createTransfer, pasteTransfer, uid, setReplacement, enableAlternatives, addAlternative, editAlternative, removeAlternative, selectAlternative, matchesRule, THEMES } from './engine.js';
+import { createSettings, validateSettings, compile, parseBatch, inspectRules, planPaste, createTransfer, pasteTransfer, uid, setReplacement, THEMES } from './engine.js';
 import { CONTEXT_RULES, CONTEXT_MATCH_TEXT, createContextOptions, validateContextOptions } from './legacy.js';
 import { installRuntime } from './runtime.js';
 import { SENTENCE_PRESETS, sentenceTemplate, validateSentenceRules } from './sentences.js';
@@ -6,7 +6,11 @@ import { SENTENCE_PRESETS, sentenceTemplate, validateSentenceRules } from './sen
 const KEY = 'st_word_replacer';
 let settings, runner, selected, dialog, pane, status, search = '', page = 0, tab = '词库';
 let historyPlan = null, undo = null, selectedText = '';
-let runtime, clipboard=null, selectedRules=new Set(), selectionGroup=null, allSearch='', candidateEditor=null;
+let runtime, clipboard=null, selectedRules=new Set(), selectionGroup=null, allSearch='', selectionMode=false;
+let settingsPage='作用范围';
+let refreshPreview=null;
+// 旧备份中的备用候选仅作兼容保留，界面和搜索都只使用当前替换值。
+const matchesRule=(rule,query)=>[rule.from,rule.to].some(value=>value.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
 let contextSearch='', contextInput='', contextTestRule='all';
 let sentenceInput='';
 const context = () => SillyTavern.getContext();
@@ -33,12 +37,13 @@ function report(error) {
 }
 function remember() {
     runner = compile(settings);
+    refreshPreview?.();
     context().extensionSettings[KEY] = settings;
     context().saveSettingsDebounced();
     runtime?.refresh();
     if (status) {
         const issues=inspectRules(settings),conflicts=issues.filter(x=>x.kind==='conflict'),duplicates=issues.filter(x=>x.kind==='duplicate');
-        status.textContent = `修改已记录 · 自动保存到 ST 设置${conflicts.length?` · ⚠ ${conflicts.length} 个冲突，请到“全库检索与检查”核对`:''}${duplicates.length?` · ${duplicates.length} 个相同重复（仅提示）`:''}`;
+        status.textContent = `修改已记录 · 自动保存到 ST 设置${conflicts.length?` · ⚠ ${conflicts.length} 个冲突，请到“冲突页”核对`:''}${duplicates.length?` · ${duplicates.length} 个相同重复（仅提示）`:''}`;
         status.classList.remove('wr-error');status.classList.toggle('wr-warn',conflicts.length>0);
     }
 }
@@ -68,11 +73,14 @@ function upsert(g, from, to) {
 }
 export function openManager(prefill = '') {
     if (!dialog) return;
+    tab='词库';selectionMode=false;selectedRules.clear();
     if (prefill) { selectedText = prefill;tab='词库';selected=ensureCustom().id; }
     render();
     if (!dialog.open) dialog.showModal();
+    dialog.scrollTop=0;
 }
 function render() {
+    refreshPreview=null;
     dialog.dataset.theme=settings.theme;
     pane.replaceChildren();
     const theme=node('select',{class:'text_pole','aria-label':'扩展配色'},...Object.entries(THEMES).map(([value,label])=>node('option',{value,selected:value===settings.theme},label)));
@@ -83,55 +91,74 @@ function render() {
         context().extensionSettings[KEY]=settings;context().saveSettingsDebounced();
         if(status){status.textContent=`配色已保存：${THEMES[settings.theme]}`;status.classList.remove('wr-error','wr-warn');}
     }));
-    const top = node('div',{class:'wr-top'},node('div',{class:'wr-title'},node('strong',{},'词汇快捷替换'),node('small',{},'修改后自动保存 · 空替换词表示删除')),
+    const top = node('div',{class:'wr-top'},node('div',{class:'wr-title'},node('strong',{},'词汇快捷替换'),
+        checkbox('启用替换',settings.enabled,v=>{settings.enabled=v;remember();})),
         node('div',{class:'wr-top-actions'},themePicker,button('×',()=>dialog.close(),{class:'menu_button wr-button wr-close','aria-label':'关闭词库管理',title:'关闭词库管理'})));
+    const tabs = node('nav',{class:'wr-tabs','aria-label':'管理页面'},...['词库','句式','冲突','设置'].map(name=>button(name,()=>{
+        tab=name;selectionMode=false;selectedRules.clear();render();dialog.scrollTop=0;
+    },{class:`menu_button wr-button ${name===tab?'wr-active':''}`,'aria-current':name===tab?'page':'false'})));
+    const body = node('div',{class:'wr-body'});
+    status = node('div',{class:'wr-status',role:'status','aria-live':'polite'},'自动保存到 ST · 自动替换保留聊天原文');
+    pane.append(top,tabs,body,status);
+    if (tab==='词库') renderDictionary(body);
+    if (tab==='设置') renderSettings(body);
+    if (tab==='冲突') renderAudit(body);
+    if (tab==='句式') renderContextual(body);
+}
+function renderSettings(body) {
+    const pages=['作用范围','预览与保护','备份与导入','历史消息'];
+    const content=node('section',{class:'wr-settings-content'});
+    body.append(node('nav',{class:'wr-settings-nav','aria-label':'设置分类'},...pages.map(name=>button(name,()=>{
+        settingsPage=name;render();dialog.scrollTop=0;
+    },{class:`menu_button wr-button ${settingsPage===name?'wr-active':''}`}))),content);
+    if(settingsPage==='预览与保护'){renderPreview(content);return;}
+    if(settingsPage==='备份与导入'){renderBackup(content);return;}
+    if(settingsPage==='历史消息'){renderHistory(content);return;}
     const controls = node('div',{class:'wr-controls'},
-        checkbox('启用替换',settings.enabled,v=>{settings.enabled=v;remember();}),
         checkbox('AI 输出',settings.assistant,v=>{settings.assistant=v;remember();}),
         checkbox('自己发出的消息',settings.user,v=>{settings.user=v;remember();}));
-    const advanced=node('details',{},node('summary',{},'更多处理选项（可按需调整）'),node('div',{class:'wr-controls'},
+    const advanced=node('div',{class:'wr-controls'},
         checkbox('编辑后生效',settings.edited,v=>{settings.edited=v;remember();}),
         checkbox('影响显示',settings.display,v=>{settings.display=v;remember();}),
         checkbox('影响模型输入',settings.prompt,v=>{settings.prompt=v;remember();}),
-        checkbox('保护代码块',settings.protectCode,v=>{settings.protectCode=v;remember();})));
+        checkbox('保护代码块',settings.protectCode,v=>{settings.protectCode=v;remember();}));
     controls.append(button('应用推荐配置',()=>{Object.assign(settings,{enabled:true,assistant:true,user:false,edited:true,display:true,prompt:true,protectCode:true});remember();render();}));
     const explanation=node('p',{class:'wr-explainer'},'自动替换保留聊天文件原文。默认只处理 AI 正文，显示与发送给模型时都生效；编辑后也会刷新。作用范围可按需勾选。');
-    const tabs = node('nav',{class:'wr-tabs'},...['词库','特殊句式','全库检索与检查','预览与保护','备份与导入','历史消息'].map(name=>button(name,()=>{tab=name;render();},{class:`menu_button wr-button ${name===tab?'wr-active':''}`})));
-    const body = node('div',{class:'wr-body'});
-    status = node('div',{class:'wr-status',role:'status','aria-live':'polite'},'词库只保存在你的 ST 设置中，不会自动上传 GitHub。');
-    pane.append(top,controls,explanation,advanced,tabs,body,status);
-    if (tab==='词库') renderDictionary(body);
-    if (tab==='预览与保护') renderPreview(body);
-    if (tab==='备份与导入') renderBackup(body);
-    if (tab==='历史消息') renderHistory(body);
-    if (tab==='全库检索与检查') renderAudit(body);
-    if (tab==='特殊句式') renderContextual(body);
+    content.append(node('h4',{},'处理哪些消息'),controls,node('h4',{},'如何生效'),advanced,explanation);
 }
 function renderDictionary(body) {
-    const sidebar = node('aside',{class:'wr-sidebar'});
-    const list = node('div',{class:'wr-group-list'});
-    settings.groups.forEach((g,index)=>{
-        list.append(node('div',{class:`wr-group ${g.id===group()?.id?'wr-selected':''}`},
-            checkbox('',g.enabled,v=>{g.enabled=v;remember();}),
-            button(`${g.name} (${g.rules.length})`,()=>{selected=g.id;page=0;search='';render();}),
-            button('↑',()=>{if(index){[settings.groups[index-1],settings.groups[index]]=[g,settings.groups[index-1]];remember();render();}},{title:'向前移动分类'})));
-    });
-    sidebar.append(node('b',{},'分类'),list,button('＋ 新建分类',()=>{
+    const chooseGroup=id=>{selected=id;page=0;search='';selectedRules.clear();render();dialog.scrollTop=0;};
+    const newGroup=()=>{
         if(settings.groups.length>=200)throw new Error('分类不能超过 200 个。');
         const name=prompt('新分类名称');if(!name?.trim())return;
-        const g={id:uid(),name:name.trim().slice(0,100),enabled:true,rules:[]};settings.groups.push(g);selected=g.id;page=0;search='';remember();render();
-    }),node('small',{},'长词优先。同名原词以靠后的已启用分类为准。'),
-    checkbox('启用特殊句式',settings.contextual,v=>{settings.contextual=v;remember();}),
-    button('管理特殊句式',()=>{tab='特殊句式';render();}),
-    node('small',{},'按条件处理上下文；可逐项开关、调整替换结果和保护条件。'));
+        const g={id:uid(),name:name.trim().slice(0,100),enabled:true,rules:[]};settings.groups.push(g);remember();chooseGroup(g.id);
+    };
+    const sidebar = node('aside',{class:'wr-sidebar'});
+    const list = node('div',{class:'wr-group-list'});
+    settings.groups.forEach(g=>{
+        list.append(node('div',{class:`wr-group ${g.id===group()?.id?'wr-selected':''}`},
+            checkbox('',g.enabled,v=>{g.enabled=v;remember();render();}),
+            button(`${g.name} (${g.rules.length})`,()=>chooseGroup(g.id),{'aria-current':g.id===group()?.id?'true':'false'})));
+        list.lastElementChild.querySelector('input').setAttribute('aria-label',`启用分类 ${g.name}`);
+    });
+    sidebar.append(node('b',{},'我的分类'),list,button('＋ 新建分类',newGroup),node('small',{},'长词优先。同名原词以靠后的已启用分类为准。'));
     const content=node('section',{class:'wr-content'});body.append(node('div',{class:'wr-layout'},sidebar,content));
+    const categorySelect=node('select',{class:'text_pole','aria-label':'当前分类'},...settings.groups.map(g=>node('option',{value:g.id,selected:g.id===group()?.id},`${g.name} · ${g.rules.length} 条${g.enabled?'':' · 已停用'}`)));
+    categorySelect.addEventListener('change',()=>chooseGroup(categorySelect.value));
+    content.append(node('div',{class:'wr-mobile-categories'},categorySelect,button('＋',newGroup,{'aria-label':'新建分类'})));
     const g=group();
     if(!g){content.append(node('p',{},'请先新建分类。'));return;}
     selected=g.id;
     if(selectionGroup!==g.id){selectionGroup=g.id;selectedRules.clear();}
-    content.append(node('div',{class:'wr-row'},field(g.name,'分类名称',v=>{g.name=v.trim()||'未命名分类';remember();}),
+    const rename=field(g.name,'分类名称',()=>{});
+    rename.addEventListener('change',()=>{g.name=rename.value.trim().slice(0,100)||'未命名分类';remember();render();});
+    const categoryTools=node('details',{class:'wr-category-tools'},node('summary',{},'分类设置'),node('div',{class:'wr-row'},rename,
+        checkbox('启用此分类',g.enabled,v=>{g.enabled=v;remember();render();}),
         button('导出此类',()=>download(`${g.name}.json`,{...structuredClone(settings),groups:[structuredClone(g)]})),
-        button('删除分类',()=>{if(!confirm(`删除“${g.name}”及其中 ${g.rules.length} 个词条？`))return;settings.groups=settings.groups.filter(x=>x!==g);selected=null;remember();render();})));
+        button('向前移动分类',()=>{const index=settings.groups.indexOf(g);if(index){[settings.groups[index-1],settings.groups[index]]=[g,settings.groups[index-1]];remember();render();}},{disabled:settings.groups[0]===g}),
+        button('删除分类',()=>{if(!confirm(`删除“${g.name}”及其中 ${g.rules.length} 个词条？`))return;settings.groups=settings.groups.filter(x=>x!==g);selected=null;search='';page=0;selectedRules.clear();remember();render();})),
+        node('small',{},'仅同名原词受分类顺序影响：靠后的已启用分类生效。'));
+    content.append(node('div',{class:'wr-category-heading'},node('b',{},`${g.name}${g.enabled?'':' · 已停用'}`),categoryTools));
     const from=field(selectedText,'原词（必填）',()=>{}); selectedText='';
     const to=field('','替换为（留空即删除）',()=>{});
     content.append(node('div',{class:'wr-row wr-add'},from,node('span',{},'→'),to,button('添加 / 更新',()=>{
@@ -141,14 +168,18 @@ function renderDictionary(body) {
     const pager=node('div',{class:'wr-row'});
     const selectionInfo=node('span',{});
     const pastePanel=node('div',{class:'wr-paste-panel'});
-    const selectionStatus=()=>{selectionInfo.textContent=`已选 ${selectedRules.size} 条 · ${clipboard?.mode==='cut'?'待剪切':'已复制'} ${clipboard?.rules.length??0} 条${clipboard?.rules.length?`（来自 ${clipboard.sourceName}）`:''}`;};
+    const selectionStatus=()=>{
+        selectionInfo.textContent=`已选 ${selectedRules.size} 条${clipboard?.rules.length?` · ${clipboard.mode==='cut'?'待剪切':'已复制'} ${clipboard.rules.length} 条（${clipboard.sourceName}）`:''}`;
+        for(const b of batchTools.querySelectorAll('[data-needs-selection]'))b.disabled=!selectedRules.size;
+        for(const b of batchTools.querySelectorAll('[data-needs-clipboard]'))b.disabled=!clipboard?.rules.length;
+    };
     const capture=mode=>{clipboard=createTransfer(g,selectedRules,mode);pastePanel.replaceChildren();refresh();status.textContent=mode==='cut'?'已标记待剪切。切换分类后粘贴成功才会移除原项；取消或刷新不会删除原词条。':`已复制 ${clipboard.rules.length} 条，现在可切换分类后粘贴。`;};
-    const batchTools=node('div',{class:'wr-row'},
+    const batchTools=node('div',{class:'wr-batch-bar',hidden:!selectionMode,'aria-label':'批量操作'},selectionInfo,node('div',{class:'wr-row'},
         button('全选搜索结果',()=>{g.rules.filter(r=>matchesRule(r,search)).forEach(r=>selectedRules.add(r.id));refresh();}),
         button('清空选择',()=>{selectedRules.clear();refresh();}),
-        button('复制所选',()=>capture('copy')),
-        button('剪切所选',()=>capture('cut')),
-        button('清空剪贴内容',()=>{clipboard=null;pastePanel.replaceChildren();refresh();}),
+        button('复制所选',()=>capture('copy'),{'data-needs-selection':''}),
+        button('剪切所选',()=>capture('cut'),{'data-needs-selection':''}),
+        button('清空剪贴内容',()=>{clipboard=null;pastePanel.replaceChildren();refresh();},{'data-needs-clipboard':''}),
         button('粘贴到此类',()=>{
             if(!clipboard?.rules.length)throw new Error('请先在任意分类中复制或剪切词条。');
             if(clipboard.mode==='cut'&&clipboard.sourceId===g.id)throw new Error('请切换到其他分类后粘贴；原词条尚未移除。');
@@ -156,7 +187,7 @@ function renderDictionary(body) {
             const policy=node('select',{class:'text_pole'},node('option',{value:'skip'},'冲突：保留现有，跳过复制项'),node('option',{value:'overwrite'},'冲突：用复制项覆盖现有替换词'),node('option',{value:'disabled'},'冲突：新增为停用词条，稍后核对'));
             pastePanel.replaceChildren(node('p',{},`待新增 ${plan.additions.length} 条 · 相同重复 ${plan.duplicates.length} 条（跳过） · 冲突 ${plan.conflicts.length} 条`),
                 ...(pending.mode==='cut'?[node('p',{},'剪切：仅移除已完整转入目标的词条。冲突被跳过、停用状态不一致或词条被修改时，原项保留。目标分类的总开关决定移动后是否生效。')]:[]),
-                ...plan.conflicts.slice(0,20).map(x=>node('div',{class:'wr-conflict'},`${x.incoming.from}：现有 ${x.existing.map(r=>r.to||'〔删除〕').join(' / ')}；复制项 ${x.incoming.to||'〔删除〕'}（替换值或候选配置不同；覆盖会使用复制项的完整配置）`)),policy,
+                ...plan.conflicts.slice(0,20).map(x=>node('div',{class:'wr-conflict'},`${x.incoming.from}：现有 ${x.existing.map(r=>r.to||'〔删除〕').join(' / ')}；复制项 ${x.incoming.to||'〔删除〕'}（替换配置不同；覆盖会采用复制项的完整配置）`)),policy,
                 button('确认粘贴',()=>{
                     if(clipboard!==pending||JSON.stringify(g.rules)!==targetSnapshot)throw new Error('剪贴内容或目标词库已变化，请重新点击粘贴查看预览。');
                     const result=pasteTransfer(settings,g.id,pending,policy.value);
@@ -164,61 +195,46 @@ function renderDictionary(body) {
                     remember();render();
                     if(pending.mode==='cut')status.textContent=`已移动 ${result.moved} 条；${result.remaining.length} 条仍保留在来源分类。`;
                 }),button('取消粘贴',()=>pastePanel.replaceChildren()));
-        }),selectionInfo);
+        },{'data-needs-clipboard':''})));
+    const selectionToggle=button(selectionMode?'完成选择':'批量选择',()=>{
+        selectionMode=!selectionMode;selectedRules.clear();batchTools.hidden=!selectionMode;pastePanel.replaceChildren();
+        selectionToggle.textContent=selectionMode?'完成选择':'批量选择';selectionToggle.setAttribute('aria-pressed',String(selectionMode));refresh();
+    },{'aria-pressed':String(selectionMode)});
     const refresh=()=>{
         table.replaceChildren();pager.replaceChildren();
         const filtered=g.rules.filter(r=>matchesRule(r,search));
         const max=Math.max(0,Math.ceil(filtered.length/80)-1);page=Math.min(page,max);
         const issues=new Map(inspectRules(settings).map(x=>[x.from,x]));
-        table.append(node('div',{class:'wr-rule wr-table-head'},node('span',{},'选 / 启用'),node('span',{},'原词'),node('span',{},'替换为 · 空白即删除'),node('span',{},'操作')));
+        if(!filtered.length)table.append(node('p',{class:'wr-empty'},search?'没有找到匹配词条。试试其他关键词。':'这个分类还没有词条，在上方添加第一条吧。'));
+        table.append(node('div',{class:'wr-rule wr-table-head'},node('span',{},selectionMode?'选择 / 启用':'启用'),node('span',{},'原词'),node('span',{},'替换为 · 留空即删除'),node('span',{},'操作')));
         filtered.slice(page*80,page*80+80).forEach(r=>{
             const issue=issues.get(r.from),label=issue?(issue.kind==='conflict'?'⚠ 冲突':'重复'):'删除';
             const pendingCut=clipboard?.mode==='cut'&&clipboard.sourceId===g.id&&clipboard.rules.some(x=>x.id===r.id);
-            let replacement;
-            if(r.multiple){
-                replacement=node('select',{class:'text_pole','aria-label':`${r.from}的当前替换候选`},...r.alternatives.map((value,index)=>node('option',{value,selected:value===r.to},`${index+1}. ${value||'〔删除原词〕'}`)));
-                replacement.addEventListener('change',protect(()=>{selectAlternative(r,replacement.value);remember();refresh();}));
-            }else replacement=field(r.to,'留空即删除',v=>{setReplacement(r,v);remember();});
-            const row=node('div',{class:`wr-rule${pendingCut?' wr-cut-pending':''}`,'data-rule-id':r.id,title:pendingCut?'待剪切：粘贴成功后才移除':''},node('div',{class:'wr-row-checks'},checkbox('选择',selectedRules.has(r.id),v=>{v?selectedRules.add(r.id):selectedRules.delete(r.id);selectionStatus();}),checkbox('启用',r.enabled,v=>{r.enabled=v;remember();})),
-                field(r.from,'原词',v=>{if(!v){status.textContent='原词不能为空，暂时保留之前的原词；请补充或删除此行。';return;}r.from=v;remember();}),
-                replacement,
-                node('div',{},...(issue?.kind==='conflict'?[button(label,()=>{allSearch=r.from;tab='全库检索与检查';render();},{class:'menu_button wr-button wr-conflict',title:'查看冲突分类和生效规则'})]:issue?[node('small',{},'重复')]:[]),
-                    button(r.multiple?`候选 ${r.alternatives.length}`:'候选',()=>{candidateEditor=candidateEditor===r.id?null:r.id;refresh();},{title:'按需设置多个替换词','aria-label':`管理 ${r.from} 的候选替换词`}),
+            const replacement=field(r.to,'留空即删除',v=>{setReplacement(r,v);remember();});
+            const row=node('div',{class:`wr-rule${pendingCut?' wr-cut-pending':''}`,'data-rule-id':r.id,title:pendingCut?'待剪切：粘贴成功后才移除':''},node('div',{class:'wr-row-checks'},
+                ...(selectionMode?[checkbox('选择',selectedRules.has(r.id),v=>{v?selectedRules.add(r.id):selectedRules.delete(r.id);selectionStatus();})]:[]),checkbox('启用',r.enabled,v=>{r.enabled=v;remember();})),
+                node('label',{class:'wr-word-field'},node('small',{},'原词'),field(r.from,'原词',v=>{if(!v){status.textContent='原词不能为空，暂时保留之前的原词；请补充或删除此行。';return;}r.from=v;remember();})),
+                node('label',{class:'wr-word-field'},node('small',{},'替换为'),replacement),
+                node('div',{class:'wr-rule-actions'},...(issue?.kind==='conflict'?[button(label,()=>{allSearch=r.from;tab='冲突';selectionMode=false;selectedRules.clear();render();dialog.scrollTop=0;},{class:'menu_button wr-button wr-conflict',title:'查看冲突分类和生效规则'})]:issue?[node('small',{},'重复')]:[]),
                     button('删除',()=>{g.rules=g.rules.filter(x=>x!==r);selectedRules.delete(r.id);remember();refresh();})));
+            row.querySelectorAll('input[type=text]').forEach((input,i)=>input.setAttribute('aria-label',i?'替换为':'原词'));
+            row.querySelectorAll('input[type=text]').forEach((input,i)=>input.maxLength=i?10000:2000);
+            const original=row.querySelector('input[type=text]');original.addEventListener('blur',()=>{if(!original.value)original.value=r.from;});
             table.append(row);
-            if(candidateEditor===r.id)table.append(renderCandidates(r,refresh));
         });
-        pager.append(button('上一页',()=>{page=Math.max(0,page-1);refresh();}),node('span',{},`第 ${page+1}/${max+1} 页 · ${filtered.length} 条`),button('下一页',()=>{page=Math.min(max,page+1);refresh();}));
+        pager.append(...(max?[button('上一页',()=>{page=Math.max(0,page-1);refresh();},{disabled:page===0})]:[]),node('small',{},`${filtered.length} 条${max?` · 第 ${page+1}/${max+1} 页`:''}`),...(max?[button('下一页',()=>{page=Math.min(max,page+1);refresh();},{disabled:page===max})]:[]));
         selectionStatus();
     };
-    content.append(field(search,'搜索当前分类的原词 / 替换词',v=>{search=v;page=0;refresh();}),batchTools,pastePanel,table,pager);
+    content.append(node('div',{class:'wr-dictionary-toolbar'},field(search,'搜索当前分类的原词 / 替换词',v=>{search=v;page=0;refresh();}),selectionToggle),pastePanel,table,pager);
     const batch=node('textarea',{class:'text_pole',rows:4,placeholder:'每行一条，例如：\n旧称 → 新称\n【草稿标记】 →\n也支持 => 或制表符；# 开头为注释。'});
     content.append(node('details',{},node('summary',{},'批量添加到当前分类'),batch,button('检查并添加',()=>{
         const rules=parseBatch(batch.value);if(!rules.length)throw new Error('没有可添加的词条。');
         rules.forEach(r=>upsert(g,r.from,r.to));remember();render();
     }),node('small',{},'批量格式会去掉两端空格；需要匹配空格时使用单条编辑。')));
+    const preview=node('details',{class:'wr-inline-preview'},node('summary',{},'试用与保护词'));
+    preview.addEventListener('toggle',()=>{if(preview.open&&preview.childElementCount===1){const view=node('div',{});preview.append(view);renderPreview(view);}});
+    content.append(preview,batchTools);
     refresh();
-}
-function renderCandidates(rule,refresh) {
-    const box=node('section',{class:'wr-candidate-panel','aria-label':`${rule.from}的候选设置`},
-        node('div',{class:'wr-row'},node('b',{},`${rule.from} · 多个替换词`),button('收起候选',()=>{candidateEditor=null;refresh();})),
-        checkbox('为此词启用多个替换词',rule.multiple===true,v=>{enableAlternatives(rule,v);remember();refresh();}));
-    if(!rule.multiple){
-        box.append(node('small',{},rule.alternatives?'当前按普通词条使用，保留已有候选；重新启用可继续选择。':'默认使用单个替换词。启用后可添加候选，每次只选择一个生效。'));
-        return box;
-    }
-    box.append(node('small',{},'圆点选中项立即生效，其他候选仅作备用。修改候选文字后点“保存修改”。空文字表示删除原词；最多 50 项。'));
-    rule.alternatives.forEach((value,index)=>{
-        const text=node('textarea',{class:'text_pole',rows:2,value,'aria-label':`候选 ${index+1} 的文字`,maxLength:10000});
-        const radio=node('input',{type:'radio',name:`wr-candidate-${rule.id}`,checked:rule.to===value,'aria-label':`使用候选 ${index+1}`,
-            onchange:protect(()=>{selectAlternative(rule,value);remember();refresh();})});
-        box.append(node('div',{class:'wr-candidate-row'},node('label',{class:'wr-check'},radio,`候选 ${index+1}${rule.to===value?' · 当前使用':''}${value===''?' · 删除原词':''}`),text,
-            node('div',{class:'wr-row'},button('保存修改',()=>{editAlternative(rule,index,text.value);remember();refresh();}),
-                button('删除候选',()=>{removeAlternative(rule,index);remember();refresh();},{disabled:rule.to===value,title:rule.to===value?'请先选用其他候选，再删除此项':'删除此备用候选'}))));
-    });
-    const addition=node('textarea',{class:'text_pole',rows:2,placeholder:'输入新的候选替换词；留空可添加“删除原词”选项',maxLength:10000});
-    box.append(addition,button('添加候选',()=>{addAlternative(rule,addition.value);remember();refresh();}));
-    return box;
 }
 function renderContextual(body) {
     const cards=node('div',{class:'wr-context-cards'}),testBox=node('section',{class:'wr-context-test'});
@@ -333,13 +349,12 @@ function renderAudit(body) {
             const state=issue?.kind==='conflict'?(issue.activeConflict?'⚠ 冲突':'⚠ 潜在冲突（部分已停用）'):issue?'重复 · 仅提示':'无同名冲突';
             results.append(node('div',{class:`wr-audit-row ${issue?.kind==='conflict'?'wr-conflict-row':''}`},
                 node('b',{},`${r.from} → ${r.to||'〔删除〕'}`),node('small',{},`${g.name} · ${g.enabled&&r.enabled?'启用':'停用'} · ${state}`),
-                ...(r.alternatives?[node('small',{},`候选${r.multiple?'已启用':'已保留'}：${r.alternatives.map(x=>x||'〔删除〕').join(' / ')}；仅当前替换值参与冲突判断。`)]:[]),
                 ...(issue?[node('small',{},issue.winner?`当前生效：${issue.winner.group} → ${issue.winner.to||'〔删除〕'}`:'当前没有启用项')]:[]),
                 button('定位到分类',()=>{selected=g.id;search=r.from;page=0;tab='词库';render();})));
         });
         if(pages>1)results.append(node('div',{class:'wr-row'},button('上一页',()=>{auditPage=Math.max(0,auditPage-1);draw();}),button('下一页',()=>{auditPage=Math.min(pages-1,auditPage+1);draw();})));
     };
-    body.append(node('p',{},'只显示冲突词条，包括停用项造成的潜在冲突。相同原词对应不同的当前替换词才算冲突；备用候选不参与判断。无冲突词条和完全相同的重复项不列出。'),
+    body.append(node('p',{},'只显示冲突词条，包括停用项造成的潜在冲突。相同原词对应不同的当前替换词才算冲突。无冲突词条和完全相同的重复项不列出。'),
         field(allSearch,'搜索全部分类、原词、替换词',v=>{allSearch=v;auditPage=0;draw();}),summary,results);draw();
 }
 function renderPreview(body) {
@@ -352,12 +367,13 @@ function renderPreview(body) {
             ...result.hits.map(h=>node('div',{class:'wr-hit'},`${h.from} → ${h.to||'〔删除〕'} · ${h.group} × ${h.count}`)));
     };
     input.addEventListener('input',preview);
+    refreshPreview=preview;
     const exceptions=node('textarea',{class:'text_pole',rows:4,value:settings.exceptions.join('\n'),placeholder:'每行一个保护词，完整词语保持不变。例：小三花'});
     exceptions.addEventListener('input',protect(()=>{settings.exceptions=[...new Set(exceptions.value.split(/\r?\n/).filter(Boolean))];remember();preview();}));
     body.append(node('p',{},'替换结果不会被同一次词库匹配再次处理；重复原词以后面的分类为准。特殊句式规则仍在词库前后处理。'),
         input,node('b',{},'替换结果'),output,hits,node('h4',{},'保护词'),exceptions,
         node('small',{},'保护词和代码块会原样保留。普通文本中的名字、链接等仍可能被单字规则影响。'),
-        node('p',{},runner.conflicts.length?`⚠ 同名不同替换：${runner.conflicts.join('、')}，可在全库检索与检查中核对。`:'当前没有同名不同替换的冲突。'));
+        node('p',{},runner.conflicts.length?`⚠ 同名不同替换：${runner.conflicts.join('、')}，可在冲突页中核对。`:'当前没有同名不同替换的冲突。'));
 }
 function renderBackup(body) {
     const file=node('input',{type:'file',accept:'.json,application/json'});
@@ -374,10 +390,10 @@ function renderBackup(body) {
                 if(settings.groups.length+imported.groups.length>200)throw new Error('合并后分类过多。');
                 settings.groups.push(...imported.groups);settings.exceptions=[...new Set([...settings.exceptions,...imported.exceptions])];
             }
-            selected=null;remember();render();status.textContent='导入完成。';
+            selected=null;search='';page=0;selectedRules.clear();remember();render();status.textContent='导入完成。';
         }),node('hr'),button('恢复原始词库（先导出当前备份）',()=>{
             if(!confirm('恢复原始 124 条词库和默认开关？当前设置会先下载备份。'))return;
-            download(`ST-WordReplacer-before-reset-${stamp()}.json`,settings);settings=createSettings();selected=null;remember();render();
+            download(`ST-WordReplacer-before-reset-${stamp()}.json`,settings);settings=createSettings();selected=null;search='';page=0;selectedRules.clear();remember();render();
         }),node('p',{},'脚本型 JSON 含可执行代码，不能在此直接导入；此处仅接受本扩展的词库备份。'));
 }
 function renderHistory(body) {
@@ -432,7 +448,7 @@ function installAPI() {
             if(!g){if(settings.groups.length>=200)throw new Error('分类不能超过 200 个。');g={id:uid(),name:String(category).trim().slice(0,100)||'未命名分类',enabled:true,rules:[]};settings.groups.push(g);}
             upsert(g,from,to);remember();if(dialog.open)render();return true;
         },
-        import:data=>{settings=validateSettings(data);selected=null;remember();if(dialog.open)render();},
+        import:data=>{settings=validateSettings(data);selected=null;search='';page=0;selectedRules.clear();remember();if(dialog.open)render();},
     });
 }
 // 与 ST 内置 caption 扩展相同的设置标题和魔法棒条目结构。
@@ -444,7 +460,7 @@ export function mountEntrypoints() {
             node('div',{class:'inline-drawer-icon fa-solid fa-circle-chevron-down down'}));
         const content=node('div',{class:'inline-drawer-content'},
             button('打开词库管理',()=>openManager()),
-            node('small',{},'v1.1.2 · 候选替换 · 冲突检查 · 六种配色'),
+            node('small',{},'v1.1.3 · 分类词库 · 句段删除 · 冲突检查'),
             node('small',{},'也可从聊天输入区旁的魔法棒打开词库管理。'));
         host.append(node('div',{id:'wr-settings',class:'wr-settings'},node('div',{class:'inline-drawer'},header,content)));
     }
