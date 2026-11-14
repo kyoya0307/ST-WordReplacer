@@ -1,12 +1,12 @@
 {
-  "display_name": "分类词库 · 快捷替换",
+  "display_name": "词汇快捷替换",
   "loading_order": 80,
   "requires": [],
   "optional": [],
   "js": "index.js",
   "css": "style.css",
   "author": "ST-WordReplacer contributors; original rules: OwO",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "generate_interceptor": "STWordReplacerPrompt",
   "homePage": "https://github.com/kyoya0307/ST-WordReplacer",
   "auto_update": false

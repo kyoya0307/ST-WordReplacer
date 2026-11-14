@@ -1,10 +1,10 @@
 import { DEFAULT_GROUPS } from './defaults.js';
-import { legacyBefore, legacyAfter } from './legacy.js';
+import { createContextOptions, validateContextOptions, compileContext } from './legacy.js';
 
 export const uid = () => globalThis.crypto?.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export function createSettings() {
     return { version: 2, enabled: true, assistant: true, user: false, edited: true, display: true, prompt: true,
-        contextual: true, protectCode: true, exceptions: [], groups: structuredClone(DEFAULT_GROUPS) };
+        contextual: true, contextOptions:createContextOptions(), protectCode: true, exceptions: [], groups: structuredClone(DEFAULT_GROUPS) };
 }
 export function validateSettings(data) {
     if (!data || ![1,2].includes(data.version) || !Array.isArray(data.groups)) throw new Error('不是支持的词库备份（version: 1 或 2）。');
@@ -15,6 +15,7 @@ export function validateSettings(data) {
     }
     // 旧版的 edited=false 是默认值；新版采用可随时关闭的推荐配置。
     if(data.version===1)base.edited=true;
+    base.contextOptions=validateContextOptions(data.contextOptions);
     let count = 0;
     base.groups = data.groups.map(g => {
         if (!g || typeof g.name !== 'string' || !g.name.trim() || !Array.isArray(g.rules)) throw new Error('分类格式有误。');
@@ -33,6 +34,7 @@ const escape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // 长词优先、一次替换。后面的分类覆盖前面分类中的同名词；替换结果不再次参与匹配。
 export function compile(settings) {
+    const contextual=compileContext(settings.contextOptions);
     const rules = new Map();
     for (const group of settings.groups) if (group.enabled) for (const rule of group.rules) {
         if (!rule.enabled || !rule.from) continue;
@@ -57,9 +59,7 @@ export function compile(settings) {
             };
             const segment = str => {
                 if (settings.contextual) {
-                    const before = legacyBefore(str);
-                    if (before !== str) hit('特殊组合', '上下文处理', '特殊句式规则');
-                    str = before;
+                    str = contextual.run(str,'before',(from,to,name)=>hit(from,to,`特殊句式 · ${name}`));
                 }
                 if (matcher) str = str.replace(matcher, word => {
                     const rule = rules.get(word);
@@ -67,9 +67,7 @@ export function compile(settings) {
                     return rule.to;
                 });
                 if (settings.contextual) {
-                    const after = legacyAfter(str);
-                    if (after !== str) hit('特殊句式', '上下文处理', '特殊句式规则');
-                    str = after;
+                    str = contextual.run(str,'after',(from,to,name)=>hit(from,to,`特殊句式 · ${name}`));
                 }
                 return str;
             };
@@ -135,6 +133,37 @@ export function pasteRules(target, incoming, policy='skip', capacity=20000) {
     if(draft.length-target.rules.length>capacity)throw new Error('粘贴后词条总数超过 20000 条。');
     target.rules=draft;
     return plan;
+}
+
+export function createTransfer(source, ids, mode='copy') {
+    if(!['copy','cut'].includes(mode))throw new Error('未知的剪贴方式。');
+    const rules=structuredClone(source.rules.filter(r=>ids.has(r.id)));
+    if(!rules.length)throw new Error('请先勾选词条。');
+    return {mode,sourceId:source.id,sourceName:source.name,rules};
+}
+export function pasteTransfer(settings,targetId,transfer,policy='skip') {
+    const target=settings.groups.find(g=>g.id===targetId);
+    if(!target||!transfer?.rules?.length)throw new Error('没有可粘贴的词条或目标分类已删除。');
+    const source=settings.groups.find(g=>g.id===transfer.sourceId);
+    const cutting=transfer.mode==='cut';
+    if(cutting){
+        if(!source)throw new Error('剪切来源分类已删除，请重新选择。');
+        if(source===target)throw new Error('请切换到其他分类后粘贴；原词条尚未移除。');
+        for(const item of transfer.rules){
+            const current=source.rules.find(r=>r.id===item.id);
+            if(!current||current.from!==item.from||current.to!==item.to||current.enabled!==item.enabled)throw new Error('待剪切词条已被修改或删除，请重新剪切；本次未移动任何词条。');
+        }
+    }
+    const draft={...target,rules:target.rules.map(r=>({...r}))};
+    pasteRules(draft,transfer.rules,policy,Infinity);
+    // 只移除目标中确实存在相同文字和开关状态的条目。跳过冲突或降为停用的启用项仍留在源分类。
+    const moved=cutting?transfer.rules.filter(r=>draft.rules.some(x=>x.from===r.from&&x.to===r.to&&x.enabled===r.enabled)):[];
+    const movedIds=new Set(moved.map(r=>r.id));
+    const total=settings.groups.reduce((n,g)=>n+g.rules.length,0)+draft.rules.length-target.rules.length-moved.length;
+    if(total>20000)throw new Error('粘贴后词条总数超过 20000 条。');
+    target.rules=draft.rules;
+    if(cutting)source.rules=source.rules.filter(r=>!movedIds.has(r.id));
+    return {moved:moved.length,remaining:cutting?transfer.rules.filter(r=>!movedIds.has(r.id)):transfer.rules};
 }
 
 export function parseBatch(text) {
