@@ -1,0 +1,60 @@
+/* 配色只作用于本扩展对话框。跟随 ST 时继续使用宿主输入框和按钮样式。 */
+#wr-manager {
+    --wr-bg:var(--SmartThemeBlurTintColor,#20232b);
+    --wr-fg:var(--SmartThemeBodyColor,#eee);
+    --wr-border:var(--SmartThemeBorderColor,#666);
+    --wr-accent:var(--SmartThemeQuoteColor,#8eace9);
+    --wr-tint:color-mix(in srgb,var(--wr-accent) 10%,transparent);
+    --wr-warn:var(--SmartThemeBodyColor,#eee);
+    --wr-error:var(--SmartThemeBodyColor,#eee);
+    background:var(--wr-bg);color:var(--wr-fg);border-color:var(--wr-border);
+}
+#wr-manager[data-theme="pink"] {
+    color-scheme:light;--wr-bg:#fff3f7;--wr-fg:#462d3b;--wr-muted:#755467;--wr-border:#cda6b8;
+    --wr-input:#fffafd;--wr-button:#f7dce8;--wr-accent:#9b315f;--wr-tint:#f9e4ed;--wr-warn:#894716;--wr-error:#a02040;
+}
+#wr-manager[data-theme="green"] {
+    color-scheme:light;--wr-bg:#f1f8f2;--wr-fg:#233e2e;--wr-muted:#4d6958;--wr-border:#9eb8a6;
+    --wr-input:#fcfffc;--wr-button:#dcecdf;--wr-accent:#276644;--wr-tint:#e1efe4;--wr-warn:#85501c;--wr-error:#a02d3b;
+}
+#wr-manager[data-theme="beige"] {
+    color-scheme:light;--wr-bg:#f8f1e3;--wr-fg:#493d2e;--wr-muted:#70604b;--wr-border:#c3b394;
+    --wr-input:#fffaf0;--wr-button:#ebdfc8;--wr-accent:#77552b;--wr-tint:#efe4cf;--wr-warn:#854417;--wr-error:#a12832;
+}
+#wr-manager[data-theme="black"] {
+    color-scheme:dark;--wr-bg:#101318;--wr-fg:#edf0f5;--wr-muted:#b7c0cd;--wr-border:#566170;
+    --wr-input:#191e26;--wr-button:#252d38;--wr-accent:#a7c8ff;--wr-tint:#202e43;--wr-warn:#f5bf75;--wr-error:#ffb0b6;
+}
+#wr-manager[data-theme="white"] {
+    color-scheme:light;--wr-bg:#ffffff;--wr-fg:#242b35;--wr-muted:#5a6472;--wr-border:#b4beca;
+    --wr-input:#ffffff;--wr-button:#edf0f4;--wr-accent:#315f9f;--wr-tint:#eaf0f8;--wr-warn:#925300;--wr-error:#a52a37;
+}
+#wr-manager:not([data-theme="st"]) {--SmartThemeBodyColor:var(--wr-fg);--SmartThemeQuoteColor:var(--wr-accent);--SmartThemeBorderColor:var(--wr-border);--SmartThemeBlurTintColor:var(--wr-bg);text-shadow:none}
+#wr-manager:not([data-theme="st"]) * {text-shadow:none}
+#wr-manager:not([data-theme="st"]) .text_pole,
+#wr-manager:not([data-theme="st"]) option {
+    background:var(--wr-input);color:var(--wr-fg);border-color:var(--wr-border);box-shadow:none;
+}
+#wr-manager:not([data-theme="st"]) .menu_button {
+    background:var(--wr-button);color:var(--wr-fg);border:1px solid var(--wr-border);box-shadow:none;
+}
+#wr-manager:not([data-theme="st"]) .menu_button:hover {background:var(--wr-tint);border-color:var(--wr-accent)}
+#wr-manager:not([data-theme="st"]) .text_pole::placeholder {color:var(--wr-muted);opacity:1}
+#wr-manager:not([data-theme="st"]) small,
+#wr-manager:not([data-theme="st"]) .wr-info,
+#wr-manager:not([data-theme="st"]) .wr-table-head {color:var(--wr-muted);opacity:1}
+#wr-manager .wr-active {outline-color:var(--wr-accent)}
+#wr-manager .wr-selected {background:var(--wr-tint);outline-color:var(--wr-accent)}
+#wr-manager .wr-explainer {background:var(--wr-tint);border-left-color:var(--wr-accent)}
+#wr-manager .wr-candidate-panel {background:var(--wr-tint);border-color:var(--wr-accent)}
+#wr-manager .wr-context-card,#wr-manager .wr-audit-row,#wr-manager .wr-output,
+#wr-manager .wr-paste-panel,#wr-manager .wr-tabs,#wr-manager .wr-sidebar,
+#wr-manager .wr-status,#wr-manager .wr-candidate-row,#wr-manager .wr-context-test,
+#wr-manager .wr-hit {border-color:var(--wr-border)}
+#wr-manager .wr-conflict,#wr-manager .wr-warn {color:var(--wr-warn)}
+#wr-manager .wr-conflict-row {border-left-color:var(--wr-warn)}
+#wr-manager .wr-error {color:var(--wr-error)}
+#wr-manager .wr-cut-pending {outline-color:var(--wr-warn);background:var(--wr-tint)}
+#wr-manager input[type="checkbox"],#wr-manager input[type="radio"] {accent-color:var(--wr-accent)}
+#wr-manager :is(button,input,select,textarea,summary):focus-visible {outline:2px solid var(--wr-accent);outline-offset:2px}
+#wr-manager .wr-body>input.text_pole {width:calc(100% - 10px)}
