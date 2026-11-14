@@ -173,6 +173,15 @@
 #wr-manager .wr-advanced>summary{padding:14px 0;font-size:13px;font-weight:600}
 #wr-manager .wr-advanced[open]{padding-bottom:16px}
 #wr-manager .wr-punctuation-examples p{font-size:13px;margin:6px 0}
+#wr-manager .wr-library-actions{margin:0 0 20px}
+#wr-manager .wr-import-card{padding:18px;border:1px solid var(--wr-line);background:var(--wr-surface);border-radius:12px;margin:16px 0}
+#wr-manager .wr-import-card h4:first-child{margin-top:0}
+#wr-manager .wr-import-card select{display:block;width:100%;padding:10px 12px;margin:8px 0;border-radius:8px;white-space:normal}
+#wr-manager .wr-import-file{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+#wr-manager .wr-import-filename{font-size:13px;overflow-wrap:anywhere;min-width:0}
+#wr-manager .wr-import-feedback:empty{display:none}
+#wr-manager .wr-import-success{border:1px solid var(--wr-accent);background:var(--wr-tint);border-radius:12px;padding:16px;margin-bottom:18px}
+#wr-manager .wr-import-success small{margin:6px 0 10px}
 @media(max-width:700px){
  #wr-manager .wr-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding-bottom:12px}
  #wr-manager .wr-tabs .wr-button{min-width:0;padding:7px 4px}
@@ -191,5 +200,9 @@
  #wr-manager .wr-template-rule{padding:12px 14px}
  #wr-manager .wr-advanced{padding-left:12px;padding-right:12px}
  #wr-manager .wr-list-heading{margin-top:18px}
+ #wr-manager .wr-library-actions{align-items:flex-start;gap:12px}
+ #wr-manager .wr-library-actions>.wr-row{display:grid;grid-template-columns:1fr 1fr;width:100%}
+ #wr-manager .wr-library-actions .wr-button{min-height:42px}
+ #wr-manager .wr-import-card{padding:14px}
 }
 @media(prefers-reduced-motion:reduce){#wr-manager .wr-button{transition:none}}

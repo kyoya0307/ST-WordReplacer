@@ -129,6 +129,11 @@ function renderSettings(body) {
     content.append(node('h4',{},'处理哪些消息'),controls,node('h4',{},'如何生效'),advanced,explanation);
 }
 function renderDictionary(body) {
+    body.append(node('div',{class:'wr-section-head wr-library-actions'},
+        node('div',{},node('h3',{},'我的词库'),node('small',{},`${settings.groups.length} 个分类 · ${settings.groups.reduce((n,g)=>n+g.rules.length,0)} 条词条`)),
+        node('div',{class:'wr-row'},
+            button('导入词库',()=>{tab='设置';settingsPage='备份与导入';selectionMode=false;selectedRules.clear();render();dialog.scrollTop=0;},{class:'menu_button wr-button wr-primary'}),
+            button('导出备份',()=>download(`ST-WordReplacer-${stamp()}.json`,settings)))));
     const chooseGroup=id=>{selected=id;page=0;search='';selectedRules.clear();render();dialog.scrollTop=0;};
     const newGroup=()=>{
         if(settings.groups.length>=200)throw new Error('分类不能超过 200 个。');
@@ -470,25 +475,41 @@ function renderPreview(body) {
         node('p',{},runner.conflicts.length?`⚠ 同名不同替换：${runner.conflicts.join('、')}，可在冲突页中核对。`:'当前没有同名不同替换的冲突。'));
 }
 function renderBackup(body) {
-    const file=node('input',{type:'file',accept:'.json,application/json'});
-    const mode=node('select',{class:'text_pole'},node('option',{value:'merge'},'追加为新分类（推荐）'),node('option',{value:'replace'},'用备份覆盖全部设置'));
-    body.append(node('p',{},'备份包括分类、词条、保护词、特殊句式、句段删除规则、配色和开关。追加导入只合并分类与保护词，保留当前句式和句段规则；覆盖全部设置才恢复备份中的全部配置。导入不执行脚本。'),
-        button('导出全部词库与设置',()=>download(`ST-WordReplacer-${stamp()}.json`,settings)),file,mode,
-        button('导入 JSON',async()=>{
+    const file=node('input',{type:'file',accept:'.json,application/json',hidden:true,'aria-label':'词库 JSON 文件'});
+    const chooseFile=button('选择 JSON 文件',()=>file.click());
+    const filename=node('span',{class:'wr-import-filename'},'尚未选择文件'),feedback=node('p',{class:'wr-import-feedback',role:'status','aria-live':'polite'});
+    const mode=node('select',{class:'text_pole','aria-label':'导入方式'},node('option',{value:'merge'},'追加为新分类（保留当前设置）'),node('option',{value:'replace'},'用备份覆盖全部设置（包含句式）'));
+    const help=node('small',{});
+    const showMode=()=>{help.textContent=mode.value==='merge'?'只追加分类和保护词。不会导入备份中的句式规则、配色和开关。':'恢复整套词库、句式规则、配色和开关，并替换当前配置。建议先导出当前备份。';};
+    mode.addEventListener('change',showMode);showMode();
+    const apply=button('导入 JSON',async()=>{
             const f=file.files[0];if(!f)throw new Error('请先选择 JSON 文件。');
-            if(f.size>10*1024*1024)throw new Error('文件不能超过 10 MB。');
-            const imported=validateSettings(JSON.parse(await f.text()));
-            if(mode.value==='replace'&&!confirm('覆盖当前全部设置？建议先导出备份。'))return;
-            if(mode.value==='replace')settings=imported;
-            else {
-                if(settings.groups.length+imported.groups.length>200)throw new Error('合并后分类过多。');
-                settings.groups.push(...imported.groups);settings.exceptions=[...new Set([...settings.exceptions,...imported.exceptions])];
-            }
-            selected=null;search='';page=0;sentenceDraft=null;selectedRules.clear();remember();render();status.textContent='导入完成。';
-        }),node('hr'),button('恢复原始词库（先导出当前备份）',()=>{
+            const importMode=mode.value;
+            apply.disabled=true;chooseFile.disabled=true;file.disabled=true;mode.disabled=true;feedback.classList.remove('wr-error');feedback.textContent='正在读取词库…';
+            try {
+                if(f.size>10*1024*1024)throw new Error('文件不能超过 10 MB。');
+                const imported=validateSettings(JSON.parse((await f.text()).replace(/^\uFEFF/,'')));
+                if(importMode==='replace'&&!confirm('覆盖当前全部设置？建议先导出备份。')){feedback.textContent='已取消，当前词库未改变。';return;}
+                const next=importMode==='replace'?imported:validateSettings({...settings,groups:[...settings.groups,...imported.groups],exceptions:[...new Set([...settings.exceptions,...imported.exceptions])]});
+                compile(next); // Check rule execution before replacing the current settings.
+                settings=next;selected=null;search='';page=0;sentenceDraft=null;clipboard=null;selectedRules.clear();remember();render();status.textContent='导入完成。';
+                const result=node('div',{class:'wr-import-success',role:'status'},node('b',{},'词库已导入'),node('small',{},`已读取 ${imported.groups.length} 个分类、${imported.groups.reduce((n,g)=>n+g.rules.length,0)} 条词条。${importMode==='merge'?'已追加到现有分类，句式配置未改变。':'词库与句式配置已一并恢复。'}`),
+                    button('查看词库',()=>{tab='词库';render();dialog.scrollTop=0;},{class:'menu_button wr-button wr-primary'}));
+                pane.querySelector('.wr-settings-content').prepend(result);dialog.scrollTop=0;
+            } catch(error){feedback.textContent=`导入失败：${error.message}`;feedback.classList.add('wr-error');throw error;}
+            finally {apply.disabled=!file.files.length;chooseFile.disabled=false;file.disabled=false;mode.disabled=false;}
+        },{class:'menu_button wr-button wr-primary',disabled:true});
+    file.addEventListener('change',()=>{filename.textContent=file.files[0]?.name??'尚未选择文件';feedback.textContent='';apply.disabled=!file.files.length;});
+    body.append(node('div',{class:'wr-section-head'},node('div',{},node('h3',{},'导入词库'),node('p',{},'从 JSON 文件加载词库。导入前会校验格式。'))),
+        node('section',{class:'wr-import-card'},
+            node('h4',{},'1 · 选择文件'),node('div',{class:'wr-import-file'},chooseFile,filename,file),
+            node('h4',{},'2 · 选择导入方式'),mode,help,
+            node('h4',{},'3 · 确认导入'),apply,feedback),
+        node('section',{class:'wr-import-card'},node('h4',{},'导出备份'),node('p',{},'保存全部分类、词条、保护词、句式规则、配色和开关，之后可重新导入。'),button('导出全部词库与设置',()=>download(`ST-WordReplacer-${stamp()}.json`,settings))),
+        node('details',{class:'wr-advanced'},node('summary',{},'恢复原始词库'),button('恢复原始词库（先导出当前备份）',()=>{
             if(!confirm('恢复原始 124 条词库和默认开关？当前设置会先下载备份。'))return;
             download(`ST-WordReplacer-before-reset-${stamp()}.json`,settings);settings=createSettings();selected=null;search='';page=0;sentenceDraft=null;selectedRules.clear();remember();render();
-        }),node('p',{},'脚本型 JSON 含可执行代码，不能在此直接导入；此处仅接受本扩展的词库备份。'));
+        })),node('small',{},'支持本扩展导出的 JSON 词库备份；脚本型 JSON 不在此处导入，也不会执行其中的代码。'));
 }
 function renderHistory(body) {
     const user=node('input',{type:'checkbox'});
@@ -554,7 +575,7 @@ export function mountEntrypoints() {
             node('div',{class:'inline-drawer-icon fa-solid fa-circle-chevron-down down'}));
         const content=node('div',{class:'inline-drawer-content'},
             button('打开词库管理',()=>openManager()),
-            node('small',{},'v1.1.4 · 分类词库 · 句段模板 · 冲突检查'),
+            node('small',{},'v1.1.5 · 分类词库 · 句段模板 · 冲突检查'),
             node('small',{},'也可从聊天输入区旁的魔法棒打开词库管理。'));
         host.append(node('div',{id:'wr-settings',class:'wr-settings'},node('div',{class:'inline-drawer'},header,content)));
     }
