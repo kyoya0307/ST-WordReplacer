@@ -10,6 +10,7 @@ let historyPlan = null, undo = null, selectedText = '';
 let runtime, clipboard=null, selectedRules=new Set(), selectionGroup=null, allSearch='', selectionMode=false;
 let settingsPage='作用范围';
 let refreshPreview=null;
+let refreshConflictBadges=null;
 // 旧备份中的备用候选仅作兼容保留，界面和搜索都只使用当前替换值。
 const matchesRule=(rule,query)=>[rule.from,rule.to].some(value=>value.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
 let contextSearch='', contextInput='', contextTestRule='all';
@@ -43,8 +44,10 @@ function remember() {
     context().extensionSettings[KEY] = settings;
     context().saveSettingsDebounced();
     runtime?.refresh();
+    const issues=inspectRules(settings);
+    refreshConflictBadges?.(issues);
     if (status) {
-        const issues=inspectRules(settings),conflicts=issues.filter(x=>x.kind==='conflict'),duplicates=issues.filter(x=>x.kind==='duplicate');
+        const conflicts=issues.filter(x=>x.kind==='conflict'),duplicates=issues.filter(x=>x.kind==='duplicate');
         status.textContent = `修改已记录 · 自动保存到 ST 设置${conflicts.length?` · ⚠ ${conflicts.length} 个冲突，请到“冲突页”核对`:''}${duplicates.length?` · ${duplicates.length} 个相同重复（仅提示）`:''}`;
         status.classList.remove('wr-error');status.classList.toggle('wr-warn',conflicts.length>0);
     }
@@ -83,16 +86,20 @@ export function openManager(prefill = '') {
 }
 function render() {
     refreshPreview=null;
+    refreshConflictBadges=null;
     dialog.dataset.theme=settings.theme;
     pane.replaceChildren();
-    const theme=node('select',{class:'text_pole','aria-label':'扩展配色'},...Object.entries(THEMES).map(([value,label])=>node('option',{value,selected:value===settings.theme},label)));
-    const themePicker=node('label',{class:'wr-theme-picker',title:`配色：${THEMES[settings.theme]}`},node('span',{'aria-hidden':'true'},'☼'),theme);
-    theme.addEventListener('change',protect(()=>{
-        settings.theme=theme.value;dialog.dataset.theme=settings.theme;
-        themePicker.title=`配色：${THEMES[settings.theme]}`;
+    const themeKeys=Object.keys(THEMES),nextTheme=()=>themeKeys[(themeKeys.indexOf(settings.theme)+1)%themeKeys.length];
+    const describeTheme=()=>{
+        const label=`切换配色：当前${THEMES[settings.theme]}，下一项${THEMES[nextTheme()]}`;
+        themePicker.title=label;themePicker.setAttribute('aria-label',label);
+    };
+    const themePicker=button('☼',()=>{
+        settings.theme=nextTheme();dialog.dataset.theme=settings.theme;describeTheme();
         context().extensionSettings[KEY]=settings;context().saveSettingsDebounced();
         if(status){status.textContent=`配色已保存：${THEMES[settings.theme]}`;status.classList.remove('wr-error','wr-warn');}
-    }));
+    },{class:'menu_button wr-button wr-theme-picker'});
+    describeTheme();
     const top = node('div',{class:'wr-top'},node('div',{class:'wr-title'},node('strong',{},'词汇快捷替换'),
         checkbox('启用替换',settings.enabled,v=>{settings.enabled=v;remember();})),
         node('div',{class:'wr-top-actions'},themePicker,button('×',()=>dialog.close(),{class:'menu_button wr-button wr-close','aria-label':'关闭词库管理',title:'关闭词库管理'})));
@@ -165,10 +172,20 @@ function renderDictionary(body) {
     const categoryTools=node('details',{class:'wr-category-tools'},node('summary',{},'分类设置'),node('div',{class:'wr-row'},rename,
         checkbox('启用此分类',g.enabled,v=>{g.enabled=v;remember();render();}),
         button('导出此类',()=>download(`${g.name}.json`,{...structuredClone(settings),groups:[structuredClone(g)]})),
-        button('向前移动分类',()=>{const index=settings.groups.indexOf(g);if(index){[settings.groups[index-1],settings.groups[index]]=[g,settings.groups[index-1]];remember();render();}},{disabled:settings.groups[0]===g}),
         button('删除分类',()=>{if(!confirm(`删除“${g.name}”及其中 ${g.rules.length} 个词条？`))return;settings.groups=settings.groups.filter(x=>x!==g);selected=null;search='';page=0;selectedRules.clear();remember();render();})),
         node('small',{},'仅同名原词受分类顺序影响：靠后的已启用分类生效。'));
-    content.append(node('div',{class:'wr-category-heading'},node('b',{},`${g.name}${g.enabled?'':' · 已停用'}`),categoryTools));
+    const moveGroup=direction=>{
+        const index=settings.groups.indexOf(g),target=index+direction;
+        if(target<0||target>=settings.groups.length)return;
+        [settings.groups[index],settings.groups[target]]=[settings.groups[target],g];
+        remember();render();
+        status.textContent=`“${g.name}”已${direction<0?'上移':'下移'} · 排序已保存；同名词以靠下的已启用分类为准。`;
+    };
+    const ordering=node('div',{class:'wr-category-order','aria-label':'分类排序'},
+        node('small',{},`第 ${settings.groups.indexOf(g)+1} / ${settings.groups.length} 类`),
+        button('↑ 上移',()=>moveGroup(-1),{disabled:settings.groups[0]===g,'aria-label':'上移当前分类',title:'上移当前分类；同名词以靠下的已启用分类为准'}),
+        button('↓ 下移',()=>moveGroup(1),{disabled:settings.groups.at(-1)===g,'aria-label':'下移当前分类',title:'下移当前分类；同名词以靠下的已启用分类为准'}));
+    content.append(node('div',{class:'wr-category-heading'},node('b',{},`${g.name}${g.enabled?'':' · 已停用'}`),ordering,categoryTools));
     const deletionScope=node('select',{class:'text_pole','aria-label':'本分类空替换值的删除范围'},...Object.entries({word:'只删除匹配文字',...TEMPLATE_SCOPES}).map(([value,label])=>node('option',{value,selected:value===(g.deleteScope??'word')},label)));
     deletionScope.addEventListener('change',protect(()=>{g.deleteScope=deletionScope.value;remember();render();}));
     categoryTools.append(node('label',{},'替换词留空时',deletionScope),node('small',{},'仅影响本分类的空替换词条；非空替换和其他分类不变。复制到其他分类后，空替换采用目标分类的删除范围。'));
@@ -179,6 +196,16 @@ function renderDictionary(body) {
         upsert(g,from.value,to.value);remember();render();
     })));
     const table=node('div',{class:'wr-rule-list'});
+    refreshConflictBadges=issues=>{
+        const byFrom=new Map(issues.map(x=>[x.from,x])),byId=new Map(g.rules.map(r=>[r.id,r]));
+        for(const row of table.querySelectorAll('[data-rule-id]')){
+            const r=byId.get(row.dataset.ruleId),badge=row.querySelector('.wr-rule-issue');
+            const issue=g.enabled&&r?.enabled?byFrom.get(r.from):null;
+            badge.hidden=!issue;badge.replaceChildren();
+            if(issue?.kind==='conflict')badge.append(button('⚠ 冲突',()=>{allSearch=r.from;tab='冲突';selectionMode=false;selectedRules.clear();render();dialog.scrollTop=0;},{class:'menu_button wr-button wr-conflict',title:'查看当前已启用的冲突规则'}));
+            else if(issue)badge.append(node('small',{},'重复'));
+        }
+    };
     const pager=node('div',{class:'wr-row'});
     const selectionInfo=node('span',{});
     const pastePanel=node('div',{class:'wr-paste-panel'});
@@ -218,18 +245,16 @@ function renderDictionary(body) {
         table.replaceChildren();pager.replaceChildren();
         const filtered=g.rules.filter(r=>matchesRule(r,search));
         const max=Math.max(0,Math.ceil(filtered.length/80)-1);page=Math.min(page,max);
-        const issues=new Map(inspectRules(settings).map(x=>[x.from,x]));
         if(!filtered.length)table.append(node('p',{class:'wr-empty'},search?'没有找到匹配词条。试试其他关键词。':'这个分类还没有词条，在上方添加第一条吧。'));
         table.append(node('div',{class:'wr-rule wr-table-head'},node('span',{},selectionMode?'选择 / 启用':'启用'),node('span',{},'原词'),node('span',{},'替换为 · 留空即删除'),node('span',{},'操作')));
         filtered.slice(page*80,page*80+80).forEach(r=>{
-            const issue=issues.get(r.from),label=issue?(issue.kind==='conflict'?'⚠ 冲突':'重复'):'删除';
             const pendingCut=clipboard?.mode==='cut'&&clipboard.sourceId===g.id&&clipboard.rules.some(x=>x.id===r.id);
             const replacement=field(r.to,'留空即删除',v=>{setReplacement(r,v);remember();});
             const row=node('div',{class:`wr-rule${pendingCut?' wr-cut-pending':''}`,'data-rule-id':r.id,title:pendingCut?'待剪切：粘贴成功后才移除':''},node('div',{class:'wr-row-checks'},
                 ...(selectionMode?[checkbox('选择',selectedRules.has(r.id),v=>{v?selectedRules.add(r.id):selectedRules.delete(r.id);selectionStatus();})]:[]),checkbox('启用',r.enabled,v=>{r.enabled=v;remember();})),
                 node('label',{class:'wr-word-field'},node('small',{},'原词'),field(r.from,'原词',v=>{if(!v){status.textContent='原词不能为空，暂时保留之前的原词；请补充或删除此行。';return;}r.from=v;remember();})),
                 node('label',{class:'wr-word-field'},node('small',{},'替换为'),replacement),
-                node('div',{class:'wr-rule-actions'},...(issue?.kind==='conflict'?[button(label,()=>{allSearch=r.from;tab='冲突';selectionMode=false;selectedRules.clear();render();dialog.scrollTop=0;},{class:'menu_button wr-button wr-conflict',title:'查看冲突分类和生效规则'})]:issue?[node('small',{},'重复')]:[]),
+                node('div',{class:'wr-rule-actions'},node('span',{class:'wr-rule-issue',hidden:true}),
                     button('删除',()=>{g.rules=g.rules.filter(x=>x!==r);selectedRules.delete(r.id);remember();refresh();})));
             row.querySelectorAll('input[type=text]').forEach((input,i)=>input.setAttribute('aria-label',i?'替换为':'原词'));
             row.querySelectorAll('input[type=text]').forEach((input,i)=>input.maxLength=i?10000:2000);
@@ -238,6 +263,7 @@ function renderDictionary(body) {
         });
         pager.append(...(max?[button('上一页',()=>{page=Math.max(0,page-1);refresh();},{disabled:page===0})]:[]),node('small',{},`${filtered.length} 条${max?` · 第 ${page+1}/${max+1} 页`:''}`),...(max?[button('下一页',()=>{page=Math.min(max,page+1);refresh();},{disabled:page===max})]:[]));
         selectionStatus();
+        refreshConflictBadges(inspectRules(settings));
     };
     content.append(node('div',{class:'wr-dictionary-toolbar'},field(search,'搜索当前分类的原词 / 替换词',v=>{search=v;page=0;refresh();}),selectionToggle),pastePanel,table,pager);
     const batch=node('textarea',{class:'text_pole',rows:4,placeholder:'每行一条，例如：\n旧称 → 新称\n【草稿标记】 →\n也支持 => 或制表符；# 开头为注释。'});
@@ -442,29 +468,30 @@ function renderAudit(body) {
     const draw=()=>{
         const issues=inspectRules(settings),byFrom=new Map(issues.map(x=>[x.from,x]));
         const conflicts=issues.filter(x=>x.kind==='conflict');
-        summary.textContent=`全库：${conflicts.length} 个冲突原词（${conflicts.filter(x=>x.activeConflict).length} 个当前启用冲突）。`;
+        summary.textContent=`当前已启用的词库：${conflicts.length} 个冲突原词。`;
         const rows=settings.groups.flatMap(g=>g.rules.map(r=>({g,r,issue:byFrom.get(r.from)}))).filter(({g,r,issue})=>
-            issue?.kind==='conflict'&&(g.name.toLocaleLowerCase().includes(allSearch.toLocaleLowerCase())||matchesRule(r,allSearch)));
+            g.enabled&&r.enabled&&issue?.kind==='conflict'&&(g.name.toLocaleLowerCase().includes(allSearch.toLocaleLowerCase())||matchesRule(r,allSearch)));
         const pages=Math.max(1,Math.ceil(rows.length/60));auditPage=Math.min(auditPage,pages-1);
         results.replaceChildren(node('p',{},rows.length?`检索到 ${rows.length} 条冲突词条 · 第 ${auditPage+1}/${pages} 页`:conflicts.length?'当前搜索没有匹配的冲突；清空搜索可查看全部冲突。':'没有发现冲突。'));
         rows.slice(auditPage*60,auditPage*60+60).forEach(({g,r,issue})=>{
-            const state=issue?.kind==='conflict'?(issue.activeConflict?'⚠ 冲突':'⚠ 潜在冲突（部分已停用）'):issue?'重复 · 仅提示':'无同名冲突';
-            results.append(node('div',{class:`wr-audit-row ${issue?.kind==='conflict'?'wr-conflict-row':''}`},
-                node('b',{},`${r.from} → ${targetText(r,g.deleteScope)}`),node('small',{},`${g.name} · ${g.enabled&&r.enabled?'启用':'停用'} · ${state}`),
+            results.append(node('div',{class:'wr-audit-row wr-conflict-row'},
+                node('b',{},`${r.from} → ${targetText(r,g.deleteScope)}`),node('small',{},`${g.name} · 启用 · ⚠ 冲突`),
                 ...(issue?[node('small',{},issue.winner?`当前生效：${issue.winner.group} → ${targetText(issue.winner,issue.winner.deleteScope)}`:'当前没有启用项')]:[]),
                 button('定位到分类',()=>{selected=g.id;search=r.from;page=0;tab='词库';render();})));
         });
         if(pages>1)results.append(node('div',{class:'wr-row'},button('上一页',()=>{auditPage=Math.max(0,auditPage-1);draw();}),button('下一页',()=>{auditPage=Math.min(pages-1,auditPage+1);draw();})));
     };
-    body.append(node('p',{},'只显示冲突词条，包括停用项造成的潜在冲突。相同原词对应不同的替换词或删除范围时算冲突。无冲突词条和完全相同的重复项不列出。'),
+    body.append(node('p',{},'只检查同时启用的分类和词条。相同原词对应不同的替换词或删除范围时才显示冲突；停用项和完全相同的重复项不列出。'),
         field(allSearch,'搜索全部分类、原词、替换词',v=>{allSearch=v;auditPage=0;draw();}),summary,results);draw();
 }
 function renderPreview(body) {
     const input=node('textarea',{class:'text_pole',rows:7,placeholder:'粘贴一段文字，查看替换结果；不会修改聊天。'});
     const output=node('pre',{class:'wr-output'});
     const hits=node('div',{});
+    const conflictSummary=node('p',{});
     const preview=()=>{
         const result=runner.run(input.value);output.textContent=result.text;
+        conflictSummary.textContent=runner.conflicts.length?`⚠ 已启用词库存在不同替换：${runner.conflicts.join('、')}，可在冲突页中核对。`:'当前已启用的词库没有冲突。';
         hits.replaceChildren(node('b',{},`命中 ${result.hits.reduce((n,h)=>n+h.count,0)} 次`),
             ...result.hits.map(h=>node('div',{class:'wr-hit'},`${h.from} → ${h.to||'〔删除〕'} · ${h.group} × ${h.count}`)));
     };
@@ -475,7 +502,8 @@ function renderPreview(body) {
     body.append(node('p',{},'替换结果不会被同一次词库匹配再次处理；重复原词以后面的分类为准。特殊句式规则仍在词库前后处理。'),
         input,node('b',{},'替换结果'),output,hits,node('h4',{},'保护词'),exceptions,
         node('small',{},'普通替换遵守保护词和代码块保护；句式模板可单独取消保护。普通文本中的名字、链接等仍可能被单字规则影响。'),
-        node('p',{},runner.conflicts.length?`⚠ 同名不同替换：${runner.conflicts.join('、')}，可在冲突页中核对。`:'当前没有同名不同替换的冲突。'));
+        conflictSummary);
+    preview();
 }
 function renderBackup(body) {
     const file=node('input',{type:'file',accept:'.json,application/json',hidden:true,'aria-label':'词库 JSON 文件'});
@@ -578,7 +606,7 @@ export function mountEntrypoints() {
             node('div',{class:'inline-drawer-icon fa-solid fa-circle-chevron-down down'}));
         const content=node('div',{class:'inline-drawer-content'},
             button('打开词库管理',()=>openManager()),
-            node('small',{},'v1.1.6 · 分类词库 · 句段模板 · 冲突检查'),
+            node('small',{},'v1.1.7 · 分类词库 · 句段模板 · 冲突检查'),
             node('small',{},'也可从聊天输入区旁的魔法棒打开词库管理。'));
         host.append(node('div',{id:'wr-settings',class:'wr-settings'},node('div',{class:'inline-drawer'},header,content)));
     }

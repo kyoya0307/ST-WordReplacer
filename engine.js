@@ -151,11 +151,11 @@ export function compile(settings) {
     };
 }
 
-// 相同原词和替换值是重复提示；相同原词但替换不同才是冲突。
+// 只检查同时启用的分类和词条；相同替换仅提示重复，不同替换才是冲突。
 export function inspectRules(settings) {
     const byFrom=new Map();
     for(const group of settings.groups)for(const rule of group.rules){
-        if(!rule.from)continue;
+        if(!group.enabled||!rule.enabled||!rule.from)continue;
         const rows=byFrom.get(rule.from)??[];
         rows.push({groupId:group.id,group:group.name,ruleId:rule.id,from:rule.from,to:rule.to,deleteScope:rule.to===''?(group.deleteScope??'word'):'word',active:group.enabled&&rule.enabled});
         byFrom.set(rule.from,rows);

@@ -6,7 +6,7 @@
   "js": "index.js",
   "css": "style.css",
   "author": "ST-WordReplacer contributors; original rules: OwO",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "generate_interceptor": "STWordReplacerPrompt",
   "homePage": "https://github.com/kyoya0307/ST-WordReplacer",
   "auto_update": false

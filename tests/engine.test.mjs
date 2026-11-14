@@ -67,11 +67,23 @@ test('没有 swipe 数组的消息和无命中消息',()=>{
     const runner=compile(custom([['原','新']]));const m={mes:'原'};
     assert.equal(replaceMessage(m,runner).replacement,'新');assert.equal(replaceMessage(m,runner),null);
 });
-test('重复只提示，冲突区分已启用与潜在冲突，列出当前胜出规则',()=>{
+test('重复只提示，仅同时启用的不同替换列为冲突，并显示当前胜出规则',()=>{
     const s=custom([['甲','乙']]);s.groups.push({id:'b',name:'分类二',enabled:true,rules:[{id:'2',from:'甲',to:'乙',enabled:true}]});
     assert.equal(inspectRules(s)[0].kind,'duplicate');assert.deepEqual(compile(s).conflicts,[]);
     s.groups[1].rules[0].to='丙';let issue=inspectRules(s)[0];assert.equal(issue.kind,'conflict');assert.equal(issue.activeConflict,true);assert.equal(issue.winner.group,'分类二');
-    s.groups[1].enabled=false;issue=inspectRules(s)[0];assert.equal(issue.activeConflict,false);assert.equal(issue.winner.group,'测试');
+    s.groups[1].enabled=false;assert.deepEqual(inspectRules(s),[]);assert.deepEqual(compile(s).conflicts,[]);
+    s.groups[1].enabled=true;s.groups[1].rules[0].enabled=false;assert.deepEqual(inspectRules(s),[]);assert.deepEqual(compile(s).conflicts,[]);
+    s.groups[1].rules[0].enabled=true;assert.equal(inspectRules(s)[0].kind,'conflict');
+});
+
+test('停用版本不把已启用的相同替换变成冲突；检查结果不包含停用项',()=>{
+    const s=custom([['旧称','新称']]);
+    s.groups.push({id:'b',name:'相同版本',enabled:true,rules:[{from:'旧称',to:'新称',enabled:true}]},
+        {id:'c',name:'停用版本',enabled:false,rules:[{from:'旧称',to:'另一称呼',enabled:true}]});
+    assert.equal(inspectRules(s)[0].kind,'duplicate');assert.equal(inspectRules(s)[0].rows.length,2);assert.deepEqual(compile(s).conflicts,[]);
+    s.groups[2].enabled=true;assert.deepEqual(compile(s).conflicts,['旧称']);
+    s.groups[2].rules[0].enabled=false;assert.deepEqual(compile(s).conflicts,[]);
+    s.groups.forEach(g=>{g.enabled=false;});assert.deepEqual(inspectRules(s),[]);
 });
 test('复制粘贴保留空替换/多行/开关，为复制项生成新 ID',()=>{
     const g={rules:[]},incoming=[{id:'old',from:'带\n换行',to:'',enabled:false}];
