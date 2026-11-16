@@ -16,7 +16,7 @@ export function download(name,data){
 }
 export class Manager{
     constructor(app){
-        this.app=app;this.tab='词库';this.view='';this.selected={};this.search='';this.selection=new Set();this.clipboard=null;this.selecting=false;this.page=0;this.draft=null;
+        this.app=app;this.tab='词库';this.view='';this.selected={};this.search='';this.selection=new Set();this.clipboard=null;this.selecting=false;this.page=0;this.draft=null;this.wordDrafts=new Map();
         this.dialog=node('dialog',{id:'wr-manager',class:'wr-dialog','aria-label':'词汇快捷替换'});this.pane=node('div',{class:'wr-shell'});this.dialog.append(this.pane);document.body.append(this.dialog);
         this.dialog.addEventListener('click',e=>{if(e.target===this.dialog)this.dialog.close();});
         this.dialog.addEventListener('cancel',e=>{if(this.draft){e.preventDefault();this.draft=null;this.render();}});
@@ -47,17 +47,17 @@ export class Manager{
         const describe=()=>{theme.title=`配色：${THEMES[this.s.theme]} · 点击切换`;theme.setAttribute('aria-label',theme.title);};describe();
         this.pane.append(node('header',{class:'wr-top'},node('div',{class:'wr-title'},node('strong',{},'词汇快捷替换'),this.check('启用处理',this.s.enabled,v=>{this.s.enabled=v;this.save();})),
             node('div',{class:'wr-top-actions'},theme,this.btn('×',()=>this.dialog.close(),{class:'wr-button menu_button wr-close','aria-label':'关闭管理窗口',title:'关闭'}))));
-        this.pane.append(node('nav',{class:'wr-tabs','aria-label':'管理页面'},...['词库','条件规则','保护词','设置'].map(name=>this.btn(name,()=>{
+        this.pane.append(node('nav',{class:'wr-tabs','aria-label':'管理页面'},...['词库','条件规则','冲突检查','保护词','设置'].map(name=>this.btn(name,()=>{
             this.tab=name;this.view='';this.search='';this.selecting=false;this.selection.clear();this.draft=null;this.page=0;this.render();this.dialog.scrollTop=0;
-        },{'aria-current':this.tab===name&&!this.view?'page':'false',class:`menu_button wr-button ${this.tab===name&&!this.view?'wr-active':''}`}))))
+        },{'aria-current':this.tab===name?'page':'false',class:`menu_button wr-button ${this.tab===name?'wr-active':''}`}))))
         this.status=node('div',{class:'wr-status',role:'status','aria-live':'polite'},'修改自动保存 · 聊天记录保留原文');
         this.body=node('main',{class:'wr-body'});this.pane.append(this.body,this.status);
-        if(this.view){this.body.append(this.row(this.btn('‹ 返回'+this.tab,()=>{this.view='';this.render();}),node('h3',{},this.view)));if(this.view==='测试效果')this.renderTest(this.body);if(this.view==='冲突检查')this.renderAudit(this.body);if(this.view==='导入与导出')this.renderBackup(this.body);return;}
+        if(this.view){this.body.append(this.row(this.btn('‹ 返回'+this.tab,()=>{this.view='';this.render();}),node('h3',{},this.view)));if(this.view==='测试效果')this.renderTest(this.body);if(this.view==='导入与导出')this.renderBackup(this.body);return;}
         if(this.tab==='设置'){this.renderSettings();return;}
+        if(this.tab==='冲突检查'){this.body.append(node('h3',{},'冲突检查'));this.renderAudit(this.body);return;}
         const key=this.key(),groups=this.s[key];
         this.body.append(node('div',{class:'wr-section-head'},node('div',{},node('h3',{},this.tab),node('small',{},`${groups.length} 个分类 · ${groups.reduce((n,g)=>n+this.items(g).length,0)} 条`)),
-            this.row(this.btn('测试效果',()=>this.showView('测试效果')),
-                this.btn('冲突检查',()=>this.showView('冲突检查')),this.btn('导入 / 导出',()=>this.showView('导入与导出')))));
+            this.row(this.btn('测试效果',()=>this.showView('测试效果')))));
         this.categoryLayout();
     }
     showView(view){this.view=view;this.render();this.dialog.scrollTop=0;}
@@ -126,11 +126,12 @@ export class Manager{
                 for(const p of this.s.protectionGroups)if(p.targets.includes(g.id)&&p.targets.length===1&&p.terms.length)throw new Error('此分类是保护词的唯一目标，请先调整保护范围。');
                 for(const p of this.s.protectionGroups){p.targets=p.targets.filter(t=>t!==g.id);if(!p.targets.length)p.targets=['all'];}
                 this.s[this.key()]=groups.filter(x=>x!==g);this.save();this.render();},{class:'wr-button menu_button wr-danger'})));
-        if(this.tab==='条件规则')panel.append(this.label('分类默认删除范围',this.select(g.defaultAction,'分类默认删除范围',{word:ACTIONS.word,clause:ACTIONS.clause,sentence:ACTIONS.sentence},v=>{g.defaultAction=v;this.save();this.render();}),`${g.rules.filter(r=>r.inheritAction).length} 条规则沿用此设置`),this.check('收起触发词',g.concealed,v=>{g.concealed=v;this.save();this.render();}));
+        if(this.tab==='条件规则')panel.append(this.label('分类默认删除范围',this.select(g.defaultAction,'分类默认删除范围',{word:ACTIONS.word,clause:ACTIONS.clause,sentence:ACTIONS.sentence},v=>{g.defaultAction=v;this.save();this.render();}),`${g.rules.filter(r=>r.inheritAction).length} 条规则沿用此设置`));
         panel.append(this.btn('收起设置',()=>panel.remove()));content.insertBefore(panel,content.children[2]??null);
     }
     moveGroup(g,direction){const groups=this.s[this.key()],i=groups.indexOf(g),j=i+direction;if(j<0||j>=groups.length)return;[groups[i],groups[j]]=[groups[j],groups[i]];this.save();this.render();}
     editWord(g,r=null,prefill=''){
+        if(!r){const input=this.body.querySelector('.wr-add-inline input');if(input){input.value=prefill;this.wordDrafts.set(g.id,{...(this.wordDrafts.get(g.id)??{}),from:prefill});input.focus();return;}}
         const old=this.body.querySelector('.wr-word-editor');old?.remove();
         const from=this.field(r?.from??prefill,'原词',null,{maxLength:2000}),to=this.field(r?.to??'','替换文字',null,{maxLength:10000});
         const mode=this.select(r?.to===''?'delete':'replace','处理方式',{replace:'替换为',delete:'删除文字'},v=>to.hidden=v==='delete');to.hidden=mode.value==='delete';
@@ -180,7 +181,19 @@ export class Manager{
                 this.save();this.render();
             }),this.btn('取消',()=>paste.replaceChildren())));
         },{hidden:!this.clipboard||!!this.clipboard.type});
-        content.append(node('div',{class:'wr-dictionary-toolbar'},this.field(this.search,'搜索原词或替换词',v=>{this.search=v;this.page=0;draw();}),this.btn('＋ 添加',()=>this.editWord(g),{class:'wr-button menu_button wr-primary'})),
+        const draft=this.wordDrafts.get(g.id)??{from:'',to:''};this.wordDrafts.set(g.id,draft);
+        const from=this.field(draft.from??'','替换前的词',v=>draft.from=v,{maxLength:2000}),to=this.field(draft.to??'','替换后的词（留空删除）',v=>draft.to=v,{maxLength:10000});
+        const add=node('form',{class:'wr-add-inline','aria-label':'添加词条',onsubmit:this.safe(e=>{
+            e.preventDefault();if(!from.value.trim())throw new Error('请填写替换前的词。');
+            const old=g.rules.find(r=>r.from===from.value);
+            if(old)setReplacement(old,to.value);else{
+                if(this.s.groups.reduce((n,x)=>n+x.rules.length,0)>=20000)throw new Error('词条数量已达到 20000。');
+                g.rules.push({id:uid(),from:from.value,to:to.value,enabled:true});
+            }
+            this.wordDrafts.delete(g.id);this.search='';this.page=0;this.save();this.render();this.body.querySelector('.wr-add-inline input')?.focus();
+            this.notice(old?`已更新词条${old.enabled?'':' · 该词条已停用'}`:'已添加，可以继续填写下一条。');
+        })},this.label('原词',from),node('span',{class:'wr-add-arrow','aria-hidden':'true'},'→'),this.label('替换为',to),this.btn('添加',()=>{}, {type:'submit',class:'wr-button menu_button wr-primary'}),node('small',{},'替换词留空时删除原词。'));
+        content.append(add,node('div',{class:'wr-dictionary-toolbar'},this.field(this.search,'搜索原词或替换词',v=>{this.search=v;this.page=0;draw();})),
             this.row(this.btn(this.selecting?'完成选择':'批量选择',()=>{this.selecting=!this.selecting;this.selection.clear();this.render();}),pasteButton),paste,list,pager,batch);
         const text=this.area('','每行一条：\n单车 → 自行车\n【待删】 →',null);
         content.append(node('details',{class:'wr-advanced'},node('summary',{},'批量添加'),text,this.btn('检查并添加',()=>{
@@ -192,12 +205,12 @@ export class Manager{
     wordsToRules(g){
         const rows=g.rules.filter(r=>this.selection.has(r.id));if(!rows.length)throw new Error('请先选择词条。');if(rows.some(r=>r.to!==''))throw new Error('请选择“删除文字”词条，替换词条可在词库继续编辑。');
         const scope=this.select('clause','迁移后的删除范围',{word:ACTIONS.word,clause:ACTIONS.clause,sentence:ACTIONS.sentence},()=>{}),name=this.field(g.name,'规则分类名称',null);
-        const preview=node('section',{class:'wr-import-card'},node('h4',{},`移动 ${rows.length} 条删除词`),name,scope,node('p',{},'移动后以规则名称显示，触发词默认收起。'));
+        const preview=node('section',{class:'wr-import-card'},node('h4',{},`移动 ${rows.length} 条删除词`),name,scope,node('p',{},'移动后会显示规则名称、触发词和删除范围。'));
         const snapshot=JSON.stringify(rows);
         preview.append(this.row(this.btn('确认移动',()=>{
             if(JSON.stringify(g.rules.filter(r=>this.selection.has(r.id)))!==snapshot)throw new Error('选择内容已变化，请重新预览。');
             if(!name.value.trim())throw new Error('请填写分类名称。');if(this.s.ruleGroups.length>=200||this.s.ruleGroups.reduce((n,g)=>n+g.rules.length,0)+rows.length>20000)throw new Error('条件规则数量已达到上限。');
-            const next={id:uid(),name:name.value.trim().slice(0,100),enabled:true,defaultAction:scope.value,concealed:true,rules:rows.map((r,i)=>({id:uid(),name:`触发规则 ${i+1}`,kind:'keywords',keywords:[r.from],matchMode:'any',action:scope.value,inheritAction:true,enabled:r.enabled,respectProtection:true}))};
+            const next={id:uid(),name:name.value.trim().slice(0,100),enabled:true,defaultAction:scope.value,concealed:false,rules:rows.map((r,i)=>({id:uid(),name:`触发规则 ${i+1}`,kind:'keywords',keywords:[r.from],matchMode:'any',action:scope.value,inheritAction:true,enabled:r.enabled,respectProtection:true}))};
             this.s.ruleGroups.push(next);g.rules=g.rules.filter(r=>!this.selection.has(r.id));this.selection.clear();this.save();this.tab='条件规则';this.selected[this.tab]=next.id;this.search='';this.render();
         },{class:'wr-button menu_button wr-primary'}),this.btn('取消',()=>preview.remove())));this.body.prepend(preview);
     }
@@ -206,23 +219,40 @@ export class Manager{
         this.draft={groupId:g.id,originalId:r?.id,data:structuredClone(r??initial),sample:kind==='context'?CONTEXT_REVIEWS[r?.template??'kinship'].sample:kind==='pattern'?'响起极轻的脚步声，随后传来极重的撞击声。':kind==='markers'?'正文。[示例开始]这段是示例内容。[示例结束]继续正文。':'她点头，【待删】这句是草稿。她坐下。'};
         this.render();this.pane.querySelector('.wr-rule-editor')?.scrollIntoView?.({block:'nearest'});
     }
+    ruleSearchText(r,g){
+        return [r.name,ruleSummary(r,g),...(r.keywords??[]),r.keyword??'',r.start??'',r.end??'',r.to??'',r.kind==='context'?CONTEXT_MATCH_TEXT[r.template]:'',...Object.keys(FILTER_FIELDS).flatMap(k=>r.filters?.[k]??[])];
+    }
+    ruleContent(r){
+        const content=node('div',{class:'wr-rule-content'}),chips=values=>node('div',{class:'wr-keyword-chips'},...values.map(v=>node('span',{},v)));
+        if(r.kind==='keywords')content.append(node('small',{},r.matchMode==='all'?'共同触发词':'触发词'),chips(r.keywords));
+        if(r.kind==='pattern')content.append(node('small',{},'触发结构'),chips([r.prefix,`${r.min===r.max?r.min:`${r.min}～${r.max}`} 个汉字`,r.suffix]));
+        if(r.kind==='markers')content.append(node('small',{},'开始标记 → 结束标记'),chips([r.start,r.end]));
+        if(r.kind==='boundary')content.append(node('small',{},'触发词'),chips([r.keyword]),node('small',{},`起始标点：${r.startChars}　结束标点：${r.endChars}`));
+        if(r.kind==='context')content.append(node('small',{},'触发内容'),node('p',{},CONTEXT_MATCH_TEXT[r.template]),r.action==='context'?node('small',{},`处理：${CONTEXT_RULES.find(t=>t.id===r.template).action}`):null);
+        if(r.action==='replace')content.append(node('small',{},'替换为'),chips([r.to===''?'〔空文本〕':r.to]));
+        if(r.filters){
+            for(const [key,label]of Object.entries(FILTER_FIELDS))if(r.filters[key]?.length)content.append(node('small',{},`${label}${['contains','excludes'].includes(key)?`（${r.filters.scope==='clause'?'同分句':'同一句'}）`:''}`),chips(r.filters[key]));
+            if(r.filters.boundary!=='any')content.append(node('small',{},`文字边界：${BOUNDARIES[r.filters.boundary]}`));
+            if(r.filters.distance)content.append(node('small',{},`关键词最多相隔 ${r.filters.distance} 字`));
+        }
+        return content;
+    }
     renderRules(content,g){
         const list=node('div',{class:'wr-template-list'});
         const draw=()=>{
-            list.replaceChildren();const rows=g.rules.filter(r=>[r.name,ruleSummary(r,g),...(!g.concealed?(r.keywords??[]):[])].some(x=>x.includes(this.search)));
+            list.replaceChildren();const rows=g.rules.filter(r=>this.ruleSearchText(r,g).some(x=>x.includes(this.search)));
             for(const r of rows){
                 const name=r.name||`规则 ${g.rules.indexOf(r)+1}`,menu=node('details',{class:'wr-item-menu'},node('summary',{'aria-label':`更多操作 ${name}`},'•••'),
                     this.btn('复制到分类',()=>this.transferItem(g,r,false)),this.btn('移动到分类',()=>this.transferItem(g,r,true)),this.btn('删除',()=>{g.rules=g.rules.filter(x=>x!==r);this.save();draw();}));
                 list.append(node('article',{class:`wr-template-rule ${r.enabled?'':'wr-rule-off'}`,'data-rule-id':r.id},
                     this.row(...(this.selecting?[this.check('选择',this.selection.has(r.id),v=>{v?this.selection.add(r.id):this.selection.delete(r.id);bulk.update();})]:[]),this.check(name,r.enabled,v=>{r.enabled=v;this.save();draw();}),node('span',{class:'wr-badge'},ACTIONS[r.inheritAction?g.defaultAction:r.action]),menu),
                     node('p',{class:'wr-rule-description'},ruleSummary(r,g)),
-                    ...(!g.concealed&&r.keywords?[node('div',{class:'wr-keyword-chips'},...r.keywords.slice(0,8).map(k=>node('span',{},k)),r.keywords.length>8?node('small',{},`共 ${r.keywords.length} 个词`):null)]:[]),
-                    this.btn(g.concealed?'编辑触发词 / 测试':'编辑 / 测试',()=>this.startRule(g,r.kind,r))));
+                    this.ruleContent(r),this.btn('编辑 / 测试',()=>this.startRule(g,r.kind,r))));
             }
             if(!rows.length)list.append(node('div',{class:'wr-empty'},this.search?'当前分类中没有匹配项。':'选一个模板，填入内容并查看效果。'));bulk.update();
         };
-        const bulk=this.genericBatch(g,()=>g.rules.filter(r=>[r.name,ruleSummary(r,g),...(!g.concealed?(r.keywords??[]):[])].some(x=>x.includes(this.search))),draw);
-        content.append(node('div',{class:'wr-dictionary-toolbar'},this.field(this.search,g.concealed?'搜索规则名称':'搜索规则或关键词',v=>{this.search=v;draw();}),this.btn('＋ 添加规则',()=>this.startRule(g),{class:'wr-button menu_button wr-primary'})),list,
+        const bulk=this.genericBatch(g,()=>g.rules.filter(r=>this.ruleSearchText(r,g).some(x=>x.includes(this.search))),draw);
+        content.append(node('div',{class:'wr-dictionary-toolbar'},this.field(this.search,'搜索规则或触发内容',v=>{this.search=v;draw();}),this.btn('＋ 添加规则',()=>this.startRule(g),{class:'wr-button menu_button wr-primary'})),list,
             node('details',{class:'wr-advanced'},node('summary',{},'从示例开始'),node('div',{class:'wr-example-grid'},
                 ...[
                     ['关键词清理','【待删】 → 删除所在分句','keywords'],
@@ -450,13 +480,13 @@ export class Manager{
         body.append(node('h3',{},'设置'),section('处理哪些消息',this.row(this.check('AI 输出',this.s.assistant,v=>{this.s.assistant=v;this.save();}),this.check('自己的消息',this.s.user,v=>{this.s.user=v;this.save();}))),
             section('生效方式',this.row(this.check('影响显示',this.s.display,v=>{this.s.display=v;this.save();}),this.check('影响模型输入',this.s.prompt,v=>{this.s.prompt=v;this.save();}),this.check('编辑后生效',this.s.edited,v=>{this.s.edited=v;this.save();}),this.check('保护代码块',this.s.protectCode,v=>{this.s.protectCode=v;this.save();})),node('p',{},'自动处理保留聊天文件原文，显示内容与发送给模型的副本按配置处理。'),this.btn('应用推荐配置',()=>{Object.assign(this.s,{enabled:true,assistant:true,user:false,display:true,prompt:true,edited:true,protectCode:true});this.save();this.render();})),
             node('p',{},this.app.runtime?.nativeFormatting?'显示方式：ST 原生格式化。HTML 正文在重新进入聊天时应用新配置。':'显示方式：兼容显示，就地处理可读正文，保留 HTML 标签与 iframe 界面。'),
-            section('数据与工具',this.row(this.btn('导入 / 导出',()=>this.showView('导入与导出')),this.btn('测试效果',()=>this.showView('测试效果')),this.btn('冲突检查',()=>this.showView('冲突检查')),
+            section('数据与工具',this.row(this.btn('导入 / 导出',()=>this.showView('导入与导出')),this.btn('测试效果',()=>this.showView('测试效果')),
                 ...(this.app.beforeMigration?[this.btn('导出升级前配置',()=>download(`ST-WordReplacer-before-v4-${stamp()}.json`,this.app.beforeMigration))]:[]))),
             node('details',{class:'wr-advanced'},node('summary',{},'可选词库与维护工具'),node('p',{},'初次使用可从空白分类开始，也可载入预设后逐项调整。'),this.btn('导入基础词库预设',()=>{
                 const data=validateSettings({version:3,groups:structuredClone(DEFAULT_GROUPS),contextual:false,exceptions:[]});this.app.settings=validateSettings({...this.s,groups:[...this.s.groups,...data.groups]});this.selected={};this.save();this.notice('基础词库已追加，请到词库页查看。');
             }),this.btn('导出备份并恢复空白配置',()=>{if(!confirm('导出当前配置，然后恢复空白词库？'))return;download(`ST-WordReplacer-before-reset-${stamp()}.json`,this.s);this.app.settings=createBlankSettings();this.selected={};this.draft=null;this.clipboard=null;this.save();this.render();}),
                 node('details',{class:'wr-history'},node('summary',{},'永久处理历史消息'))),
-            node('small',{},'v1.2.0 · 开发测试版 · 配色通过右上角按钮循环切换。'));
+            node('small',{},'v1.2.1 · 开发测试版 · 配色通过右上角按钮循环切换。'));
         const history=body.querySelector('.wr-history');history.addEventListener('toggle',()=>{if(history.open&&history.childElementCount===1)this.app.renderHistory?.(history);});
     }
 }

@@ -65,7 +65,7 @@ export function upgradeStructure(base,data){
         base.ruleGroups=data.ruleGroups.map(g=>{
             const v=groupBase(g,'rules');targets.set(g.id,v.id);
             if(!['word','clause','sentence'].includes(g.defaultAction??'clause'))throw new Error('分类默认删除范围有误。');
-            return {...v,defaultAction:g.defaultAction??'clause',concealed:g.concealed===true,rules:g.rules.map((r,i)=>{if(++count>20000)throw new Error('条件规则最多 20000 条。');return validateRule(r,i);})};
+            return {...v,defaultAction:g.defaultAction??'clause',concealed:false,rules:g.rules.map((r,i)=>{if(++count>20000)throw new Error('条件规则最多 20000 条。');return validateRule(r,i);})};
         });
         let terms=0;
         base.protectionGroups=data.protectionGroups.map(g=>{
@@ -82,7 +82,7 @@ export function upgradeStructure(base,data){
             if(!g.enabled)g.rules.forEach(r=>r.enabled=false);
             if(['clause','sentence'].includes(g.deleteScope)){
                 const moved=g.rules.filter(r=>r.to==='');
-                if(moved.length)base.ruleGroups.push({id:id(),name:g.name,enabled:g.enabled,defaultAction:g.deleteScope,concealed:true,rules:moved.map((r,i)=>({id:id(),name:`触发规则 ${i+1}`,kind:'keywords',keywords:[r.from],matchMode:'any',action:g.deleteScope,inheritAction:true,enabled:r.enabled&&winners.get(r.from)===r,respectProtection:true}))});
+                if(moved.length)base.ruleGroups.push({id:id(),name:g.name,enabled:g.enabled,defaultAction:g.deleteScope,concealed:false,rules:moved.map((r,i)=>({id:id(),name:`触发规则 ${i+1}`,kind:'keywords',keywords:[r.from],matchMode:'any',action:g.deleteScope,inheritAction:true,enabled:r.enabled&&winners.get(r.from)===r,respectProtection:true}))});
                 g.rules=g.rules.filter(r=>r.to!=='');
                 if(!g.rules.length)retiredEmpty.add(g.id);
             }
@@ -90,7 +90,7 @@ export function upgradeStructure(base,data){
         }
         base.groups=base.groups.filter(g=>!retiredEmpty.has(g.id));
         if(base.sentenceRules.length){
-            base.ruleGroups.push({id:id(),name:'句子清理',enabled:base.contextual,defaultAction:'clause',concealed:true,rules:base.sentenceRules.map((r,i)=>r.keywords?
+            base.ruleGroups.push({id:id(),name:'句子清理',enabled:base.contextual,defaultAction:'clause',concealed:false,rules:base.sentenceRules.map((r,i)=>r.keywords?
                 {id:id(),name:r.name||`清理规则 ${i+1}`,kind:'keywords',keywords:r.keywords,matchMode:r.matchMode,action:r.scope,enabled:base.contextual&&r.enabled,respectProtection:r.respectProtection,inheritAction:false}:
                 {id:id(),name:`边界规则 ${i+1}`,kind:'boundary',keyword:r.keyword,startChars:r.startChars,endChars:r.endChars,action:'clause',enabled:base.contextual&&r.enabled,respectProtection:true,inheritAction:false})});
         }
@@ -115,7 +115,7 @@ export function ruleSummary(r,g){
     return `${condition} → ${ACTIONS[action]}${count?` · ${count} 项补充条件`:''}`;
 }
 export function contextGroup(options){
-    return {id:id(),name:'语境规则',enabled:true,defaultAction:'word',concealed:true,rules:CONTEXT_RULES.map(t=>{
+    return {id:id(),name:'语境规则',enabled:true,defaultAction:'word',concealed:false,rules:CONTEXT_RULES.map(t=>{
         const config=options.rules[t.id];return {id:id(),name:t.name,kind:'context',template:t.id,action:config.replacement===null?'context':'replace',...(config.replacement===null?{}:{to:config.replacement}),enabled:config.enabled,respectProtection:true,safeContext:true,inheritAction:false};
     })};
 }

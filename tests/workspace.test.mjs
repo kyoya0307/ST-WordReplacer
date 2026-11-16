@@ -10,7 +10,7 @@ test('新安装使用空白配置；旧配置迁入词库、规则和保护词�
     const blank=createBlankSettings();assert.equal(blank.version,4);assert.equal(blank.groups[0].rules.length,0);assert.equal(blank.contextual,false);
     const old={...createSettings(),contextual:false,groups:[wordGroup(),{...wordGroup('off'),enabled:false},{...wordGroup('remove','【待删】',''),deleteScope:'clause'}],exceptions:['操作说明']};
     const before=compile(old),next=validateSettings(old);
-    assert.equal(next.groups.length,2);assert.equal(next.groups[1].rules[0].enabled,false);assert.equal(next.ruleGroups.length,1);assert.equal(next.ruleGroups[0].concealed,true);assert.equal(next.protectionGroups[0].terms[0].text,'操作说明');
+    assert.equal(next.groups.length,2);assert.equal(next.groups[1].rules[0].enabled,false);assert.equal(next.ruleGroups.length,1);assert.equal(next.ruleGroups[0].concealed,false);assert.equal(next.protectionGroups[0].terms[0].text,'操作说明');
     for(const input of ['她点头，【待删】这句是草稿。她坐下。','旧称，旧称。操作说明。'])assert.equal(compile(next).run(input).text,before.run(input).text);
     assert.deepEqual(old.groups[1].rules[0].enabled,true);
 });
