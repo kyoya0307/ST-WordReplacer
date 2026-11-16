@@ -1,4 +1,5 @@
 // 自动处理只作用于显示副本和生成请求副本，从不修改 chat / swipes / extra。
+import { patchDisplayText } from './display-dom.js';
 export function scopeAllows(settings, message) {
     return !!(settings.enabled && message && !message.is_system && message.extra?.type!=='narrator' &&
         (message.is_user ? settings.user : settings.assistant));
@@ -42,7 +43,7 @@ export function installRuntime(getContext,getSettings,getRunner,{loadNativeRegex
     const c=getContext(),types=c.eventTypes??c.event_types??{};
     const formatter=c.messageFormatter;
     const nativeFormatting=typeof formatter?.addHook==='function'&&!!formatter.stage?.BEFORE_REGEX;
-    const formatted=new Map(),legacyRendered=new WeakMap(),editing=new Set();
+    const formatted=new Map(),legacyRendered=new WeakMap(),editing=new Set(),domRecords=new WeakMap();
     const sourceText=m=>typeof m.extra?.display_text==='string'?m.extra.display_text:m.mes;
     const transform=(input,meta)=>{
         const settings=getSettings(),source=getContext().chat[meta.messageId];
@@ -79,9 +80,17 @@ export function installRuntime(getContext,getSettings,getRunner,{loadNativeRegex
         const el=document.querySelector(`#chat .mes[mesid="${id}"]`);
         if(!el||el.querySelector('.edit_textarea,.reasoning_edit_textarea'))return;
         const input=sourceText(m);
-        // 修改词库时保留正在运行的界面；它们在 ST 下次正常渲染时应用新设置。
-        // 旧版 ST 没有格式化接口，同样不抢占 HTML / iframe 楼层。
-        if(hasFrontend(el,input))return;
+        // 含界面的消息不整条重画；无格式化接口时，只就地更新可读正文。
+        if(hasFrontend(el,input)){
+            if(!nativeFormatting){
+                const root=el.querySelector('.mes_text');
+                if(root){
+                    const s=getSettings(),enabled=s.display&&scopeAllows(s,m);
+                    patchDisplayText(root,s,enabled?getRunner():{run:text=>({text,hits:[],edits:[]})},domRecords);
+                }
+            }
+            return;
+        }
         if(nativeFormatting){
             const previous=formatted.get(id);
             if(previous?.chat===ctx.chat&&previous.message===m&&previous.source===input){

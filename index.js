@@ -136,7 +136,7 @@ function renderSettings(body) {
     const explanation=node('p',{class:'wr-explainer'},'自动替换保留聊天文件原文。默认只处理 AI 正文，显示与发送给模型时都生效；编辑后也会刷新。作用范围可按需勾选。');
     const frontendHint=runtime?.nativeFormatting
         ?'含 HTML 或交互界面的消息在重新进入聊天时应用词库改动，避免中断正在运行的界面。'
-        :'当前 ST 缺少新版显示接口：含 HTML 或交互界面的消息暂不替换显示，普通消息照常处理。更新 ST 后可同时处理正文与界面消息。';
+        :'当前使用兼容显示：只修改可读正文的文字，保留 HTML 标签和交互界面。代码保护开启时跳过代码块；iframe 内部不参与替换。';
     content.append(node('h4',{},'处理哪些消息'),controls,node('h4',{},'如何生效'),advanced,explanation,node('p',{class:'wr-explainer'},frontendHint));
 }
 function renderDictionary(body) {
@@ -298,7 +298,7 @@ function renderLibraryCheck(body,g){
         const empty=g.rules.filter(r=>r.enabled&&r.to==='').length;
         state.textContent=`“${g.name}”：${g.enabled?'已启用':'已停用'} · ${empty} 条已开启的空值删除词条 · 空值范围：${TEMPLATE_SCOPES[g.deleteScope]??'只删除匹配文字'}。`+
             ` 总开关${settings.enabled?'开':'关'} / AI 输出${settings.assistant?'开':'关'} / 影响显示${settings.display?'开':'关'} / 影响模型输入${settings.prompt?'开':'关'}。`+
-            (runtime?.nativeFormatting?'显示方式：ST 原生格式化。':'显示方式：旧版兼容；含 HTML 或交互界面的整条消息会跳过显示替换。')+
+            (runtime?.nativeFormatting?'显示方式：ST 原生格式化。':'显示方式：正文文字兼容处理，保留 HTML 和 iframe；iframe 内部不参与替换。')+
             (input.value?` 本次实际命中 ${result.hits.reduce((n,h)=>n+h.count,0)} 次。`:'');
         output.textContent=result.text;
         hits.replaceChildren(...result.hits.map(h=>node('div',{class:'wr-hit'},`${h.group} · ${h.from} → ${h.to===''?'〔删除〕':h.to} × ${h.count}`)));
@@ -656,7 +656,7 @@ export function mountEntrypoints() {
             node('div',{class:'inline-drawer-icon fa-solid fa-circle-chevron-down down'}));
         const content=node('div',{class:'inline-drawer-content'},
             button('打开词库管理',()=>openManager()),
-            node('small',{},'v1.1.8 · 开发测试版 · 分类词库 · 句段模板'),
+            node('small',{},'v1.1.9 · 开发测试版 · 分类词库 · 句段模板'),
             node('small',{},'也可从聊天输入区旁的魔法棒打开词库管理。'));
         host.append(node('div',{id:'wr-settings',class:'wr-settings'},node('div',{class:'inline-drawer'},header,content)));
     }

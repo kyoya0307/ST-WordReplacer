@@ -75,12 +75,12 @@ export function compileContext(options) {
         return [new RegExp(source,pattern.flags),replacement];
     })}));
     return {
-        run(text,stage,onHit=()=>{},onlyId=null){
+        run(text,stage,onHit=()=>{},onlyId=null,replace=(text,pattern,fn)=>text.replace(pattern,fn)){
             for(const rule of entries){
                 if(rule.stage!==stage||!rule.config.enabled||(onlyId&&rule.id!==onlyId))continue;
                 for(const [pattern,replacement] of rule.steps){
                     pattern.lastIndex=0;
-                    text=text.replace(pattern,(...args)=>{
+                    text=replace(text,pattern,(...args)=>{
                         const from=args[0];
                         const to=rule.config.replacement??(typeof replacement==='function'?replacement(from):replacement.replace(/\$(\d+)/g,(_,i)=>args[Number(i)]??''));
                         if(to!==from)onHit(from,to,rule.name);

@@ -1,6 +1,7 @@
 import { DEFAULT_GROUPS } from './defaults.js';
 import { createContextOptions, validateContextOptions, compileContext } from './legacy.js';
 import { compileSentenceRules, validateSentenceRules } from './sentences.js';
+import { TextTrace } from './trace.js';
 
 export const uid = () => globalThis.crypto?.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const THEMES = Object.freeze({st:'跟随 ST',pink:'粉色',green:'绿色',beige:'米色',black:'黑色',white:'白色'});
@@ -113,8 +114,9 @@ export function compile(settings) {
     const guard = guardParts.length ? new RegExp(guardParts.join('|'), 'gu') : null;
     return {
         conflicts:inspectRules(settings).filter(x=>x.kind==='conflict').map(x=>x.from),
-        run(input) {
+        run(input,{trace=false}={}) {
             if (typeof input !== 'string' || !settings.enabled) return {text:input,hits:[]};
+            const tracking=trace?new TextTrace(input):null,parts=[];
             const hitMap = new Map();
             const hit = (from,to,group) => {
                 const key = JSON.stringify([from,to,group]);
@@ -125,32 +127,37 @@ export function compile(settings) {
             if(settings.contextual||categoryRules.length){
                 const protectedRanges=guard?[...input.matchAll(new RegExp(guard.source,guard.flags))].map(m=>({start:m.index,end:m.index+m[0].length})):[];
                 const result=sentences(input,protectedRanges);input=result.text;deletions=result.deletions;
+                tracking?.apply(deletions.map(span=>({...span,text:''})));
                 for(const span of deletions)hit(span.text,'',`句段删除 · ${span.keywords.join(' / ')}`);
             }
-            const segment = str => {
+            const segment = (str,start) => {
+                const local=tracking?.slice(start,start+str.length);
+                const replace=local?(text,pattern,fn)=>local.replace(text,pattern,fn):(text,pattern,fn)=>text.replace(pattern,fn);
                 if (settings.contextual) {
-                    str = contextual.run(str,'before',(from,to,name)=>hit(from,to,`特殊句式 · ${name}`));
+                    str = contextual.run(str,'before',(from,to,name)=>hit(from,to,`特殊句式 · ${name}`),null,replace);
                 }
-                if (matcher) str = str.replace(matcher, word => {
+                if (matcher) str = replace(str,matcher, word => {
                     const rule = rules.get(word);
                     hit(word,rule.to,rule.group);
                     return rule.to;
                 });
                 if (settings.contextual) {
-                    str = contextual.run(str,'after',(from,to,name)=>hit(from,to,`特殊句式 · ${name}`));
+                    str = contextual.run(str,'after',(from,to,name)=>hit(from,to,`特殊句式 · ${name}`),null,replace);
                 }
+                if(local)parts.push(local.origins);
                 return str;
             };
             let text = '', pos = 0;
             if (guard) {
                 guard.lastIndex = 0;
                 for (const match of input.matchAll(guard)) {
-                    text += segment(input.slice(pos,match.index)) + match[0];
+                    text += segment(input.slice(pos,match.index),pos) + match[0];
+                    if(tracking)parts.push(tracking.origins.slice(match.index,match.index+match[0].length));
                     pos = match.index+match[0].length;
                 }
             }
-            text += segment(input.slice(pos));
-            return {text,hits:[...hitMap.values()],...(deletions.length?{deletions}:{})};
+            text += segment(input.slice(pos),pos);
+            return {text,hits:[...hitMap.values()],...(deletions.length?{deletions}:{}),...(tracking?{edits:tracking.edits(text,parts.flat())}:{})};
         },
     };
 }

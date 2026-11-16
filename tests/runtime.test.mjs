@@ -9,7 +9,7 @@ function host({native=true,source='原词',iframe=false}={}) {
     ]}]};
     const handlers=new Map(),hooks=[],updates=[],errors=[];
     const element={iframe,editing:false,reasoningEdit:false,output:source,
-        querySelector(selector){return selector.includes('textarea')?(this.editing||this.reasoningEdit?{}:null):(this.iframe?{}:null);},
+        querySelector(selector){if(selector==='.mes_text')return null;return selector.includes('textarea')?(this.editing||this.reasoningEdit?{}:null):(this.iframe?{}:null);},
         querySelectorAll(){return [];},getAttribute(){return '0';}};
     globalThis.document={querySelector:()=>element,querySelectorAll:()=>[element],getElementById:()=>null};
     const context={chat:[{mes:source,is_user:false,extra:{reasoning:'原词'},swipes:[source]}],
