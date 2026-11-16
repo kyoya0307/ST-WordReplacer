@@ -123,7 +123,7 @@ test('目标分类已有多个同名不同替换时，不把冲突误判为相�
     const input=[{from:'原',to:'新'}];assert.equal(planPaste(g,input).conflicts.length,1);pasteRules(g,input,'overwrite');assert.deepEqual(g.rules.map(r=>r.to),['新','新']);
 });
 test('旧版迁移保留用户词库，新版导入保留用户关闭编辑选项',()=>{
-    const old={...custom([['原','新']]),version:1,edited:false};const s=validateSettings(old);assert.equal(s.version,3);assert.equal(s.edited,true);assert.equal(s.groups[0].rules[0].from,'原');
+    const old={...custom([['原','新']]),version:1,edited:false};const s=validateSettings(old);assert.equal(s.version,4);assert.equal(s.edited,true);assert.equal(s.groups[0].rules[0].from,'原');
     assert.equal(validateSettings({...s,edited:false}).edited,false);
 });
 test('显示替换创建副本，聊天正文、swipes、推理和显示覆盖原值完全保留',()=>{

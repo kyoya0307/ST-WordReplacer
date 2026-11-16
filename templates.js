@@ -14,7 +14,7 @@ export function validateTemplateRule(r,index=0) {
     if(r.respectProtection!==undefined&&typeof r.respectProtection!=='boolean')throw new Error('模板保护开关必须为布尔值。');
     return {id:typeof r.id==='string'?r.id:`template-${index}`,name:typeof r.name==='string'?r.name.slice(0,100):'',keywords:[...new Set(r.keywords)],matchMode:r.matchMode,scope:r.scope,enabled:r.enabled!==false,respectProtection:r.respectProtection!==false};
 }
-function units(text) {
+export function sentenceUnits(text) {
     const out=[];let start=0;
     while(start<text.length){
         if(ends.has(text[start])){start++;continue;}
@@ -50,7 +50,7 @@ export function templateSpans(input,rules,protectedRanges=[]) {
     const spans=[];
     if(!rules.length)return spans;
     const overlap=(a,b)=>a.start<b.end&&a.end>b.start;
-    for(const unit of units(input)){
+    for(const unit of sentenceUnits(input)){
         const selected=new Map();
         for(const rule of rules){
             const {hits,found}=hitsIn(input,unit,rule.keywords);

@@ -77,9 +77,9 @@ test('v3 备份保留模板字段及分类范围，旧版配置兼容',()=>{
     const s=config(['声音','平'],'all');s.sentenceRules[0].respectProtection=false;
     s.groups=[{name:'删除示例',deleteScope:'clause',enabled:true,rules:[]}];
     const restored=validateSettings(JSON.parse(JSON.stringify(s)));
-    assert.equal(restored.version,3);assert.equal(restored.groups[0].deleteScope,'clause');assert.deepEqual(restored.sentenceRules[0].keywords,['声音','平']);
-    assert.equal(restored.sentenceRules[0].respectProtection,false);assert.equal(compile(restored).run('声音很平。').text,'');
-    assert.equal(validateSettings({...s,version:2}).version,3);
+    assert.equal(restored.version,4);assert.equal(restored.groups.length,0);assert.deepEqual(restored.ruleGroups[0].rules[0].keywords,['声音','平']);
+    assert.equal(restored.ruleGroups[0].rules[0].respectProtection,false);assert.equal(compile(restored).run('声音很平。').text,'');
+    assert.equal(validateSettings({...s,version:2}).version,4);
     for(const rule of [templateRule([]),templateRule(['x'],'bad'),templateRule(['x'],'any','bad'),templateRule(['x\ny'])])assert.throws(()=>validateSettings({...s,sentenceRules:[rule]}));
 });
 test('模板开关、全局开关和特殊句式开关有效，预览范围保持原文位置',()=>{

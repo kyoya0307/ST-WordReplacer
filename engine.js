@@ -2,6 +2,9 @@ import { DEFAULT_GROUPS } from './defaults.js';
 import { createContextOptions, validateContextOptions, compileContext } from './legacy.js';
 import { compileSentenceRules, validateSentenceRules } from './sentences.js';
 import { TextTrace } from './trace.js';
+import { upgradeStructure } from './model.js';
+import { compileConditions, protectionPattern, rangesFor } from './conditions.js';
+import {compileContextGroups} from './contextual.js';
 
 export const uid = () => globalThis.crypto?.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const THEMES = Object.freeze({st:'跟随 ST',pink:'粉色',green:'绿色',beige:'米色',black:'黑色',white:'白色'});
@@ -61,10 +64,13 @@ function copyReplacement(target,source) {
 }
 export function createSettings() {
     return { version: 3, theme:'st', enabled: true, assistant: true, user: false, edited: true, display: true, prompt: true,
-        contextual: true, contextOptions:createContextOptions(), sentenceRules:[], protectCode: true, exceptions: [], groups: structuredClone(DEFAULT_GROUPS) };
+        contextual: true, contextOptions:createContextOptions(), sentenceRules:[], protectCode: true, exceptions: [], groups:structuredClone(DEFAULT_GROUPS) };
+}
+export function createBlankSettings(){
+    return {...createSettings(),version:4,contextual:false,groups:[{id:uid(),name:'日常用词',enabled:false,rules:[]}],ruleGroups:[],protectionGroups:[]};
 }
 export function validateSettings(data) {
-    if (!data || ![1,2,3].includes(data.version) || !Array.isArray(data.groups)) throw new Error('不是支持的词库备份（version: 1、2 或 3）。');
+    if (!data || ![1,2,3,4].includes(data.version) || !Array.isArray(data.groups)) throw new Error('支持 version 1～4 的词库备份。');
     if (data.groups.length > 200) throw new Error('分类不能超过 200 个。');
     const base = createSettings();
     base.theme=typeof data.theme==='string'&&Object.hasOwn(THEMES,data.theme)?data.theme:'st';
@@ -86,13 +92,15 @@ export function validateSettings(data) {
         })};
     });
     base.exceptions = validateExceptions(data.exceptions);
-    return base;
+    return upgradeStructure(base,data);
 }
 const escape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // 长词优先、一次替换。后面的分类覆盖前面分类中的同名词；替换结果不再次参与匹配。
 export function compile(settings) {
     const contextual=compileContext(settings.contextOptions);
+    const conditions=compileConditions(settings);
+    const contextGroups=compileContextGroups(settings);
     const rules = new Map();
     for (const group of settings.groups) if (group.enabled) for (const rule of group.rules) {
         if (!rule.enabled || !rule.from) continue;
@@ -107,22 +115,21 @@ export function compile(settings) {
     for(const [key,rule] of rules)if(['clause','sentence'].includes(rule.deleteScope))rules.delete(key);
     const keys = [...rules.keys()].sort((a,b) => b.length-a.length);
     const matcher = keys.length ? new RegExp(keys.map(escape).join('|'), 'gu') : null;
-    const guards = [...new Set(settings.exceptions.filter(Boolean))].sort((a,b)=>b.length-a.length);
-    const guardParts = [];
-    if (settings.protectCode) guardParts.push('```[\\s\\S]*?(?:```|$)', '~~~[\\s\\S]*?(?:~~~|$)', '`[^`\\n]+`');
-    guardParts.push(...guards.map(escape));
-    const guard = guardParts.length ? new RegExp(guardParts.join('|'), 'gu') : null;
+    const guard=protectionPattern(settings);
+    const groupGuards=new Map(settings.groups.map(g=>[g.id,protectionPattern(settings,g.id)]));
     return {
         conflicts:inspectRules(settings).filter(x=>x.kind==='conflict').map(x=>x.from),
-        run(input,{trace=false}={}) {
+        run(input,{trace=false,explain=false}={}) {
             if (typeof input !== 'string' || !settings.enabled) return {text:input,hits:[]};
-            const tracking=trace?new TextTrace(input):null,parts=[];
+            const tracking=trace?new TextTrace(input):null;
             const hitMap = new Map();
             const hit = (from,to,group) => {
                 const key = JSON.stringify([from,to,group]);
                 const old = hitMap.get(key);
                 if (old) old.count++; else hitMap.set(key,{from,to,group,count:1});
             };
+            const conditional=conditions(input,{explain}),preserved=conditional.preserved;
+            if(conditional.edits.length){tracking?.apply(conditional.edits);input=conditional.text;for(const h of conditional.hits)hit(h.from,h.to,h.group);}
             let deletions=[];
             if(settings.contextual||categoryRules.length){
                 const protectedRanges=guard?[...input.matchAll(new RegExp(guard.source,guard.flags))].map(m=>({start:m.index,end:m.index+m[0].length})):[];
@@ -130,34 +137,37 @@ export function compile(settings) {
                 tracking?.apply(deletions.map(span=>({...span,text:''})));
                 for(const span of deletions)hit(span.text,'',`句段删除 · ${span.keywords.join(' / ')}`);
             }
-            const segment = (str,start) => {
-                const local=tracking?.slice(start,start+str.length);
-                const replace=local?(text,pattern,fn)=>local.replace(text,pattern,fn):(text,pattern,fn)=>text.replace(pattern,fn);
+            const process = str => {
+                const replace=tracking?(text,pattern,fn)=>tracking.replace(text,pattern,fn):(text,pattern,fn)=>text.replace(pattern,fn);
+                const contextGuard=protectionPattern(settings,'context');
+                const replaceContext=(text,pattern,fn)=>{
+                    const ranges=rangesFor(contextGuard,text);
+                    return replace(text,pattern,(...args)=>{const offset=args[typeof args.at(-1)==='object'?args.length-3:args.length-2];
+                        return ranges.some(r=>r.start<offset+args[0].length&&r.end>offset)?args[0]:fn(...args);});
+                };
                 if (settings.contextual) {
-                    str = contextual.run(str,'before',(from,to,name)=>hit(from,to,`特殊句式 · ${name}`),null,replace);
+                    str = contextual.run(str,'before',(from,to,name)=>hit(from,to,`特殊句式 · ${name}`),null,replaceContext);
                 }
-                if (matcher) str = replace(str,matcher, word => {
+                str=contextGroups(str,'before',replace,hit,preserved,explain);
+                const scopedRanges=new Map([...groupGuards].map(([id,pattern])=>[id,rangesFor(pattern,str)]));
+                const globalRanges=rangesFor(guard,str);
+                if (matcher) str = replace(str,matcher, (word,offset) => {
                     const rule = rules.get(word);
+                    if(globalRanges.some(r=>r.start<offset+word.length&&r.end>offset)||scopedRanges.get(rule.groupId)?.some(r=>r.start<offset+word.length&&r.end>offset)){
+                        if(explain&&preserved.length<100)preserved.push({text:word,reason:'命中保护词或代码块',group:rule.group,rule:word});return word;
+                    }
                     hit(word,rule.to,rule.group);
                     return rule.to;
                 });
                 if (settings.contextual) {
-                    str = contextual.run(str,'after',(from,to,name)=>hit(from,to,`特殊句式 · ${name}`),null,replace);
+                    str = contextual.run(str,'after',(from,to,name)=>hit(from,to,`特殊句式 · ${name}`),null,replaceContext);
                 }
-                if(local)parts.push(local.origins);
+                str=contextGroups(str,'after',replace,hit,preserved,explain);
                 return str;
             };
-            let text = '', pos = 0;
-            if (guard) {
-                guard.lastIndex = 0;
-                for (const match of input.matchAll(guard)) {
-                    text += segment(input.slice(pos,match.index),pos) + match[0];
-                    if(tracking)parts.push(tracking.origins.slice(match.index,match.index+match[0].length));
-                    pos = match.index+match[0].length;
-                }
-            }
-            text += segment(input.slice(pos),pos);
-            return {text,hits:[...hitMap.values()],...(deletions.length?{deletions}:{}),...(tracking?{edits:tracking.edits(text,parts.flat())}:{})};
+            const text=process(input);
+            const allDeletions=[...conditional.deletions,...deletions];
+            return {text,hits:[...hitMap.values()],...(allDeletions.length?{deletions:allDeletions}:{}),...(tracking?{edits:tracking.edits(text)}:{}),...(explain?{preserved}:{})};
         },
     };
 }

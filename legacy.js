@@ -40,6 +40,31 @@ export const CONTEXT_RULES = [
 ]},
 ];
 const escape = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export const CONTEXT_REVIEWS={
+    combination:{finding:'修饰字与称呼组合采用固定词表，名称或引用中的相同片段也可能命中。',improvement:'可补充前后接条件及范围保留词。',sample:'姑娘们正在读书。'},
+    direction:{finding:'原有保护主要依靠后接名词表，表外的亲属叙述可能被截短。',improvement:'共享后接保护表，优先保留连续正文中的所属结构。',sample:'去他妈的家取书。'},
+    exclamation:{finding:'原有独立词边界只覆盖部分汉字，生僻字附近可能被当作独立表达。',improvement:'使用完整汉字范围判断独立出现。',sample:'体操课和操作说明。'},
+    kinship:{finding:'单字动作表和有限名词表难以覆盖所有亲属叙述。',improvement:'共享前后接保护，并可选择保留可能的所属结构。',sample:'我拜访了他妈的茶馆。'},
+    prefix:{finding:'后续前缀规则的保护表与前面的亲属判断不同，可能再次处理已保留的内容。',improvement:'统一后接保护，检查完整匹配及可选连接字。',sample:'这些都是他妈的手机。'},
+    isolated:{finding:'部分生僻汉字被旧边界当作分隔符。',improvement:'使用完整汉字边界，并提供独立出现条件。',sample:'妈妈的书放在桌上。'},
+    number:{finding:'固定名称例外无法穷尽地名、班级名等组合。',improvement:'推荐保留连写名称，独立表达继续按规则处理。',sample:'三八大桥今天通车。'},
+};
+export const CONTEXT_SAFETY={direction:'保留可能的亲属叙述',kinship:'保留可能的亲属叙述',prefix:'保留可能的亲属叙述',exclamation:'使用完整汉字边界',isolated:'使用完整汉字边界',number:'保留汉字连写的名称'};
+function safeContextReason(rule,from,before,after,config){
+    const prev=Array.from(before).at(-1)??'',next=Array.from(after)[0]??'';
+    if((rule==='exclamation'&&/^(?:我?操)$/.test(from))||rule==='isolated'){
+        if([prev,next].some(c=>/\p{Script=Han}/u.test(c)))return '与其他汉字相连，保留完整词语';
+    }
+    if(rule==='number'&&[prev,next].some(c=>/\p{Script=Han}/u.test(c)))return '与汉字连写，保留名称组合';
+    if(['direction','kinship','prefix'].includes(rule)){
+        const following=after.replace(/^的?/,'').trimStart();
+        if(config.nouns.some(word=>following.startsWith(word)))return '命中共享后接名词保护';
+        if(/(?:妈|娘)的$/.test(from)||(/(?:妈|娘)$/.test(from)&&/^的/.test(after))){
+            if(/^\p{Script=Han}/u.test(following))return '连续正文中的所属结构优先保留';
+        }
+    }
+    return '';
+}
 export function createContextOptions() {
     return {rules:Object.fromEntries(CONTEXT_RULES.map(r=>[r.id,{enabled:true,replacement:null}])),nouns:[...DEFAULT_NOUNS],verbs:DEFAULT_VERBS};
 }
@@ -65,7 +90,7 @@ export function validateContextOptions(data) {
     }
     return out;
 }
-export function compileContext(options) {
+export function compileContext(options,{safe=false,onPreserve=()=>{}}={}) {
     const config=validateContextOptions(options);
     const entries=CONTEXT_RULES.map(rule=>({...rule,config:config.rules[rule.id],steps:rule.steps.map(([pattern,replacement])=>{
         let source=pattern.source;
@@ -82,6 +107,10 @@ export function compileContext(options) {
                     pattern.lastIndex=0;
                     text=replace(text,pattern,(...args)=>{
                         const from=args[0];
+                        if(safe){
+                            const at=args[typeof args.at(-1)==='object'?args.length-3:args.length-2],reason=safeContextReason(rule.id,from,text.slice(0,at),text.slice(at+from.length),config);
+                            if(reason){onPreserve({text:from,reason,rule:rule.name});return from;}
+                        }
                         const to=rule.config.replacement??(typeof replacement==='function'?replacement(from):replacement.replace(/\$(\d+)/g,(_,i)=>args[Number(i)]??''));
                         if(to!==from)onHit(from,to,rule.name);
                         return to;

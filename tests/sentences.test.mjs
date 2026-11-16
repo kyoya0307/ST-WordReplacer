@@ -52,7 +52,7 @@ test('句段规则在普通词库之前执行，关闭开关时保留原行为',
 });
 test('句段规则备份往返、旧备份默认空列表及错误配置校验',()=>{
     const s=config(),restored=validateSettings(JSON.parse(JSON.stringify(s)));
-    assert.equal(restored.sentenceRules[0].keyword,'声音很平');assert.equal(compile(restored).run('声音很平。').text,'');
+    assert.equal(restored.ruleGroups[0].rules[0].keyword,'声音很平');assert.equal(compile(restored).run('声音很平。').text,'');
     delete s.sentenceRules;assert.deepEqual(validateSettings(s).sentenceRules,[]);
     for(const keyword of ['','\n','跨\n行','x'.repeat(2001)])assert.throws(()=>validateSentenceRules([sentenceTemplate(keyword)]));
     assert.throws(()=>validateSentenceRules(Array.from({length:201},()=>sentenceTemplate('词'))));
