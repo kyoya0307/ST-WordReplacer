@@ -1,4 +1,4 @@
-import { createSettings, validateSettings, compile, parseBatch, inspectRules, planPaste, createTransfer, pasteTransfer, uid, setReplacement, THEMES } from './engine.js';
+import { createSettings, validateSettings, validateExceptions, compile, parseBatch, inspectRules, planPaste, createTransfer, pasteTransfer, uid, setReplacement, THEMES } from './engine.js';
 import { CONTEXT_RULES, CONTEXT_MATCH_TEXT, createContextOptions, validateContextOptions } from './legacy.js';
 import { installRuntime } from './runtime.js';
 import { SENTENCE_PRESETS, sentenceTemplate, validateSentenceRules } from './sentences.js';
@@ -115,7 +115,7 @@ function render() {
     if (tab==='句式') renderContextual(body);
 }
 function renderSettings(body) {
-    const pages=['作用范围','预览与保护','备份与导入','历史消息'];
+    const pages=['作用范围','保护词','预览与保护','备份与导入','历史消息'];
     const content=node('section',{class:'wr-settings-content'});
     body.append(node('nav',{class:'wr-settings-nav','aria-label':'设置分类'},...pages.map(name=>button(name,()=>{
         settingsPage=name;render();dialog.scrollTop=0;
@@ -123,6 +123,7 @@ function renderSettings(body) {
     if(settingsPage==='预览与保护'){renderPreview(content);return;}
     if(settingsPage==='备份与导入'){renderBackup(content);return;}
     if(settingsPage==='历史消息'){renderHistory(content);return;}
+    if(settingsPage==='保护词'){renderProtection(content);return;}
     const controls = node('div',{class:'wr-controls'},
         checkbox('AI 输出',settings.assistant,v=>{settings.assistant=v;remember();}),
         checkbox('自己发出的消息',settings.user,v=>{settings.user=v;remember();}));
@@ -143,6 +144,7 @@ function renderDictionary(body) {
         node('div',{},node('h3',{},'我的词库'),node('small',{},`${settings.groups.length} 个分类 · ${settings.groups.reduce((n,g)=>n+g.rules.length,0)} 条词条`)),
         node('div',{class:'wr-row'},
             button('导入词库',()=>{tab='设置';settingsPage='备份与导入';selectionMode=false;selectedRules.clear();render();dialog.scrollTop=0;},{class:'menu_button wr-button wr-primary'}),
+            button('保护词',()=>openProtection()),
             button('导出备份',()=>download(`ST-WordReplacer-${stamp()}.json`,settings)))));
     const chooseGroup=id=>{selected=id;page=0;search='';selectedRules.clear();render();dialog.scrollTop=0;};
     const newGroup=()=>{
@@ -170,7 +172,6 @@ function renderDictionary(body) {
     const rename=field(g.name,'分类名称',()=>{});
     rename.addEventListener('change',()=>{g.name=rename.value.trim().slice(0,100)||'未命名分类';remember();render();});
     const categoryTools=node('details',{class:'wr-category-tools'},node('summary',{},'分类设置'),node('div',{class:'wr-row'},rename,
-        checkbox('启用此分类',g.enabled,v=>{g.enabled=v;remember();render();}),
         button('导出此类',()=>download(`${g.name}.json`,{...structuredClone(settings),groups:[structuredClone(g)]})),
         button('删除分类',()=>{if(!confirm(`删除“${g.name}”及其中 ${g.rules.length} 个词条？`))return;settings.groups=settings.groups.filter(x=>x!==g);selected=null;search='';page=0;selectedRules.clear();remember();render();})),
         node('small',{},'仅同名原词受分类顺序影响：靠后的已启用分类生效。'));
@@ -185,7 +186,8 @@ function renderDictionary(body) {
         node('small',{},`第 ${settings.groups.indexOf(g)+1} / ${settings.groups.length} 类`),
         button('↑ 上移',()=>moveGroup(-1),{disabled:settings.groups[0]===g,'aria-label':'上移当前分类',title:'上移当前分类；同名词以靠下的已启用分类为准'}),
         button('↓ 下移',()=>moveGroup(1),{disabled:settings.groups.at(-1)===g,'aria-label':'下移当前分类',title:'下移当前分类；同名词以靠下的已启用分类为准'}));
-    content.append(node('div',{class:'wr-category-heading'},node('b',{},`${g.name}${g.enabled?'':' · 已停用'}`),ordering,categoryTools));
+    content.append(node('div',{class:'wr-category-heading'},node('b',{},`${g.name}${g.enabled?'':' · 已停用'}`),
+        checkbox('启用此分类',g.enabled,v=>{g.enabled=v;remember();render();}),ordering,categoryTools));
     const deletionScope=node('select',{class:'text_pole','aria-label':'本分类空替换值的删除范围'},...Object.entries({word:'只删除匹配文字',...TEMPLATE_SCOPES}).map(([value,label])=>node('option',{value,selected:value===(g.deleteScope??'word')},label)));
     deletionScope.addEventListener('change',protect(()=>{g.deleteScope=deletionScope.value;remember();render();}));
     categoryTools.append(node('label',{},'替换词留空时',deletionScope),node('small',{},'仅影响本分类的空替换词条；非空替换和其他分类不变。复制到其他分类后，空替换采用目标分类的删除范围。'));
@@ -274,7 +276,66 @@ function renderDictionary(body) {
     const preview=node('details',{class:'wr-inline-preview'},node('summary',{},'试用与保护词'));
     preview.addEventListener('toggle',()=>{if(preview.open&&preview.childElementCount===1){const view=node('div',{});preview.append(view);renderPreview(view);}});
     content.append(preview,batchTools);
+    const checkPanel=node('details',{class:'wr-library-check'}),checkBody=node('div',{});
+    const checkButton=button('检查本词库',()=>{checkPanel.open=!checkPanel.open;checkButton.setAttribute('aria-expanded',String(checkPanel.open));if(checkPanel.open)checkPanel.scrollIntoView?.({block:'nearest'});},{'aria-expanded':'false'});
+    const checkTitle=node('summary',{},'词库生效检查');
+    checkPanel.append(checkTitle,checkBody);
+    checkPanel.addEventListener('toggle',()=>{checkButton.setAttribute('aria-expanded',String(checkPanel.open));if(checkPanel.open)checkLibrary();});
+    content.insertBefore(node('div',{class:'wr-row'},checkButton,node('small',{},'检查空值删除、开关和最近一条 AI 回复')),preview);
+    content.insertBefore(checkPanel,preview);
+    const checkLibrary=renderLibraryCheck(checkBody,g);
     refresh();
+}
+
+function openProtection(){tab='设置';settingsPage='保护词';selectionMode=false;selectedRules.clear();render();dialog.scrollTop=0;}
+function renderLibraryCheck(body,g){
+    const input=node('textarea',{class:'text_pole',rows:4,'aria-label':'词库检查原文',placeholder:'粘贴仍未被删除的原文，或载入最近一条 AI 回复'});
+    const mode=node('select',{class:'text_pole','aria-label':'词库检查范围'},node('option',{value:'all'},'当前全部配置'),node('option',{value:'category'},'仅当前词库（保留分类、词条和保护开关）'));
+    const state=node('p',{class:'wr-explainer'}),output=node('pre',{class:'wr-output'}),hits=node('div',{});
+    const check=()=>{
+        const isolated={...settings,groups:[g],contextual:false,sentenceRules:[]};
+        const result=(mode.value==='category'?compile(isolated):runner).run(input.value);
+        const empty=g.rules.filter(r=>r.enabled&&r.to==='').length;
+        state.textContent=`“${g.name}”：${g.enabled?'已启用':'已停用'} · ${empty} 条已开启的空值删除词条 · 空值范围：${TEMPLATE_SCOPES[g.deleteScope]??'只删除匹配文字'}。`+
+            ` 总开关${settings.enabled?'开':'关'} / AI 输出${settings.assistant?'开':'关'} / 影响显示${settings.display?'开':'关'} / 影响模型输入${settings.prompt?'开':'关'}。`+
+            (runtime?.nativeFormatting?'显示方式：ST 原生格式化。':'显示方式：旧版兼容；含 HTML 或交互界面的整条消息会跳过显示替换。')+
+            (input.value?` 本次实际命中 ${result.hits.reduce((n,h)=>n+h.count,0)} 次。`:'');
+        output.textContent=result.text;
+        hits.replaceChildren(...result.hits.map(h=>node('div',{class:'wr-hit'},`${h.group} · ${h.from} → ${h.to===''?'〔删除〕':h.to} × ${h.count}`)));
+        if(input.value&&!result.hits.length)hits.append(node('p',{},'没有命中。请核对分类与词条开关、原词是否完全一致、保护词/代码块保护，以及是否被其他同名词覆盖。原词中的正则符号按普通文字匹配。'));
+    };
+    input.addEventListener('input',check);mode.addEventListener('change',check);
+    const previousPreview=refreshPreview;
+    refreshPreview=()=>{previousPreview?.();check();};
+    body.append(mode,node('div',{class:'wr-row'},
+        button('载入最近 AI 回复',()=>{const m=context().chat.findLast(m=>!m.is_user&&!m.is_system&&typeof m.mes==='string');if(!m)throw new Error('当前聊天没有 AI 回复。');input.value=typeof m.extra?.display_text==='string'?m.extra.display_text:m.mes;check();}),
+        button('用空值词条自测',()=>{const rules=g.rules.filter(r=>r.enabled&&r.to==='');if(!rules.length)throw new Error('当前词库没有已开启的空值删除词条。');input.value=rules.slice(0,100).map(r=>`${r.from}，${r.from}。`).join('\n');mode.value='category';check();})),
+        node('small',{},'留空替换词就是删除。普通词条按完整文字全局匹配，同一个词出现多次也会全部处理。自测最多取前 100 条，每条放两次；不会修改词库或聊天。'),state,input,node('b',{},'处理结果'),output,hits);
+    check();return check;
+}
+
+function renderProtection(body){
+    const words=node('textarea',{class:'text_pole',rows:7,value:settings.exceptions.join('\n'),'aria-label':'全局保护词输入框',placeholder:'每行一个需要保持原样的词或短语\n晨光计划\n操作说明'});
+    const count=node('small',{},`${settings.exceptions.length} 条保护词 · 自动保存`);
+    words.addEventListener('input',protect(()=>{const next=validateExceptions(words.value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean));settings.exceptions=next;remember();count.textContent=`${next.length} 条保护词 · 已保存`;}));
+    const add=field('','输入一个保护词或短语',()=>{});add.setAttribute('aria-label','新增保护词');
+    body.append(node('h3',{},'保护词'),node('p',{},'输入需要保持原样的词或完整短语，每行一条。普通词库会跳过这些内容；遵守保护的分句/整句删除规则也会跳过涉及它的句段。'),
+        node('div',{class:'wr-row'},add,button('加入保护词',()=>{const value=add.value.trim();if(!value)throw new Error('请先输入保护词。');settings.exceptions=validateExceptions([...settings.exceptions,value]);remember();words.value=settings.exceptions.join('\n');add.value='';count.textContent=`${settings.exceptions.length} 条保护词 · 已保存`;})),
+        node('label',{},'全局保护词（每行一条）',words),count,
+        node('p',{class:'wr-explainer'},'例：某个词被误替换时，可以加入包含它的完整词组。保护词按文字匹配，不需要写正则。单字加入保护词后，该字的所有位置都会受到保护。'),
+        node('p',{},'句式规则如果取消了“遇到保护词或代码块时跳过”，仍会执行删除；需要保留语序时，请同时开启该规则的保护选项。'),
+        checkbox('保护代码块',settings.protectCode,v=>{settings.protectCode=v;remember();}),
+        node('h4',{},'原版语境保护'),node('p',{},'原版的名词保护表、动作保护字和固定名称判断仍然保留。它们只约束对应的内置句式，不能阻止普通词库里的单字替换。'),renderContextProtection(()=>{}));
+}
+function renderContextProtection(onChange){
+    const nouns=node('textarea',{class:'text_pole',rows:5,value:settings.contextOptions.nouns.join('\n'),'aria-label':'名词保护表',placeholder:'每行一个名词，按普通文字匹配'});
+    const verbs=field(settings.contextOptions.verbs,'动作保护字：每个字独立生效',v=>{settings.contextOptions=validateContextOptions({...settings.contextOptions,verbs:v.replace(/\s/g,'')});remember();onChange();});
+    verbs.setAttribute('aria-label','动作保护字');
+    nouns.addEventListener('input',protect(()=>{settings.contextOptions=validateContextOptions({...settings.contextOptions,nouns:nouns.value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean)});remember();onChange();}));
+    return node('section',{class:'wr-protection-context'},
+        node('label',{},'名词保护表（每行一个）',nouns),node('small',{},'用于“带去的句式”和“亲属语境判断”：后接这些名词时跳过对应规则。'),
+        node('label',{},'动作保护字',verbs),node('small',{},'用于“亲属语境判断”：前接任一字时跳过。每个字单独生效。'),
+        button('恢复保护表默认值',()=>{const defaults=createContextOptions();settings.contextOptions.nouns=defaults.nouns;settings.contextOptions.verbs=defaults.verbs;remember();nouns.value=defaults.nouns.join('\n');verbs.value=defaults.verbs;onChange();}));
 }
 function renderContextual(body) {
     const cards=node('div',{class:'wr-context-cards'}),testBox=node('section',{class:'wr-context-test'});
@@ -318,21 +379,10 @@ function renderContextual(body) {
         }
         if(!cards.childElementCount)cards.append(node('p',{},'没有符合搜索条件的句式。'));
     };
-    const nouns=node('textarea',{class:'text_pole',rows:5,value:settings.contextOptions.nouns.join('\n'),'aria-label':'名词保护表',placeholder:'每行一个名词，按普通文字匹配'});
-    const verbs=field(settings.contextOptions.verbs,'动作保护字：每个字独立生效',v=>{
-        settings.contextOptions=validateContextOptions({...settings.contextOptions,verbs:v.replace(/\s/g,'')});remember();draw();preview();
-    });
-    verbs.setAttribute('aria-label','动作保护字');
-    nouns.addEventListener('input',protect(()=>{
-        settings.contextOptions=validateContextOptions({...settings.contextOptions,nouns:nouns.value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean)});remember();draw();preview();
-    }));
     const advanced=node('details',{class:'wr-advanced'},node('summary',{},'内置句式与保护设置（进阶）'),
         node('p',{},'这里是原有的 7 组固定规则。一般保留当前设置即可；需要改它们的处理方式时再展开。下方的示例会展示哪些普通表达应当保留。'),
         field(contextSearch,'搜索句式名称、用途或保护条件',v=>{contextSearch=v;draw();}),cards,
-        node('details',{},node('summary',{},'调整亲属语境保护表'),
-            node('p',{},'名词保护表用于“带去的句式”和“亲属语境判断”：匹配片段后紧接这些名词时，跳过相应规则。'),nouns,
-            node('p',{},'动作保护字仅用于“亲属语境判断”：匹配片段前紧接任一字时跳过。每个字单独生效，不是短语表。'),verbs,
-            button('恢复保护表默认值',()=>{const defaults=createContextOptions();settings.contextOptions.nouns=defaults.nouns;settings.contextOptions.verbs=defaults.verbs;remember();render();})),
+        node('details',{},node('summary',{},'调整亲属语境保护表'),renderContextProtection(()=>{draw();preview();})),
         node('p',{},'保护条件只约束对应规则，其他句式和普通词库仍会继续处理。需要某段文字始终保持原样时，请到“预览与保护”添加完整保护词。'),testBox,
         node('small',{},'默认执行顺序与原规则一致；这些是文字模式判断，不能理解所有叙事语境。请同时测试希望替换和希望保留的句子。'));
     body.append(node('div',{class:'wr-section-head'},node('div',{},node('h3',{},'按句子删内容'),node('p',{},'选择一个例子，填入关键词，先看效果再保存。')),
@@ -498,7 +548,7 @@ function renderPreview(body) {
     input.addEventListener('input',preview);
     refreshPreview=preview;
     const exceptions=node('textarea',{class:'text_pole',rows:4,value:settings.exceptions.join('\n'),placeholder:'每行一个保护词，完整词语保持不变。例：小三花'});
-    exceptions.addEventListener('input',protect(()=>{settings.exceptions=[...new Set(exceptions.value.split(/\r?\n/).filter(Boolean))];remember();preview();}));
+    exceptions.addEventListener('input',protect(()=>{settings.exceptions=validateExceptions(exceptions.value.split(/\r?\n/).filter(Boolean));remember();preview();}));
     body.append(node('p',{},'替换结果不会被同一次词库匹配再次处理；重复原词以后面的分类为准。特殊句式规则仍在词库前后处理。'),
         input,node('b',{},'替换结果'),output,hits,node('h4',{},'保护词'),exceptions,
         node('small',{},'普通替换遵守保护词和代码块保护；句式模板可单独取消保护。普通文本中的名字、链接等仍可能被单字规则影响。'),
@@ -606,7 +656,7 @@ export function mountEntrypoints() {
             node('div',{class:'inline-drawer-icon fa-solid fa-circle-chevron-down down'}));
         const content=node('div',{class:'inline-drawer-content'},
             button('打开词库管理',()=>openManager()),
-            node('small',{},'v1.1.7 · 分类词库 · 句段模板 · 冲突检查'),
+            node('small',{},'v0.1.7 · 开发测试版 · 分类词库 · 句段模板'),
             node('small',{},'也可从聊天输入区旁的魔法棒打开词库管理。'));
         host.append(node('div',{id:'wr-settings',class:'wr-settings'},node('div',{class:'inline-drawer'},header,content)));
     }

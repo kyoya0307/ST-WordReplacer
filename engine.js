@@ -4,6 +4,12 @@ import { compileSentenceRules, validateSentenceRules } from './sentences.js';
 
 export const uid = () => globalThis.crypto?.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const THEMES = Object.freeze({st:'跟随 ST',pink:'粉色',green:'绿色',beige:'米色',black:'黑色',white:'白色'});
+export function validateExceptions(values=[]) {
+    if(!Array.isArray(values)||values.some(s=>typeof s!=='string'))throw new Error('保护词应为文字数组。');
+    const out=[...new Set(values.filter(Boolean))];
+    if(out.length>5000||out.some(s=>s.length>2000))throw new Error('保护词最多 5000 条，每条最多 2000 字。');
+    return out;
+}
 // to 始终保存当前生效文字；候选是可选数据，普通词条无需迁移。
 export function replacementData(rule) {
     if(typeof rule.to!=='string'||rule.to.length>10000)throw new Error('替换词必须为不超过 10000 字的文字。');
@@ -78,9 +84,7 @@ export function validateSettings(data) {
             return {id: uid(), from: r.from, ...replacementData(r), enabled: r.enabled !== false};
         })};
     });
-    if (data.exceptions !== undefined && (!Array.isArray(data.exceptions) || data.exceptions.some(s => typeof s !== 'string'))) throw new Error('保护词应为文字数组。');
-    base.exceptions = [...new Set((data.exceptions ?? []).filter(Boolean))];
-    if (base.exceptions.length > 5000 || base.exceptions.some(s => s.length > 2000)) throw new Error('保护词过多或过长。');
+    base.exceptions = validateExceptions(data.exceptions);
     return base;
 }
 const escape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

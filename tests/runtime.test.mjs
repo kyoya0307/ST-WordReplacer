@@ -82,6 +82,16 @@ test('原生代码块不依赖整条消息的事后刷新，词库错误不破�
     h.settings.enabled=false;await settle();assert.equal(h.updates.length,0);
 });
 
+test('原生显示处理空字符串替换，连续多个词和重复出现均删除，保护词保留',async()=>{
+    const h=host({source:'标记甲标记乙标记甲标记乙保留标记甲。'});
+    h.settings.groups[0].rules=[{from:'标记甲',to:'',enabled:true},{from:'标记乙',to:'',enabled:true}];
+    h.settings.exceptions=['保留标记甲'];
+    assert.equal(h.format(h.context.chat[0].mes),'保留标记甲。');
+    assert.equal(h.format(h.context.chat[0].mes),'保留标记甲。');
+    assert.equal(h.context.chat[0].mes,'标记甲标记乙标记甲标记乙保留标记甲。');
+    await settle();assert.equal(h.updates.length,0);
+});
+
 test('旧版无命中、停用和 HTML 消息不重绘；普通消息仍能替换和恢复',async()=>{
     const h=host({native:false,source:'无需替换'});
     h.runtime.render(0);assert.equal(h.updates.length,0);

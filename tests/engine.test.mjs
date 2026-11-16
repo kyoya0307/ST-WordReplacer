@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSettings, validateSettings, compile, parseBatch, replaceMessage, inspectRules, planPaste, pasteRules } from '../engine.js';
+import { createSettings, validateSettings, validateExceptions, compile, parseBatch, replaceMessage, inspectRules, planPaste, pasteRules } from '../engine.js';
 import { displayCopy, transformPrompt } from '../runtime.js';
 function custom(rules, extras={}) {
     return {...createSettings(),contextual:false,groups:[{id:'test',name:'测试',enabled:true,rules:rules.map(([from,to])=>({from,to,enabled:true}))}],...extras};
@@ -42,6 +42,26 @@ test('保留三八节和亲属句式，特殊规则可关闭',()=>{
 test('关闭总开关不处理文本',()=>assert.deepEqual(compile(custom([['a','b']],{enabled:false})).run('a'),{text:'a',hits:[]}));
 test('空词库不会生成空匹配正则',()=>assert.equal(compile(custom([])).run('abc').text,'abc'));
 test('命中列表统计次数',()=>assert.equal(compile(custom([['甲','乙']])).run('甲甲').hits[0].count,2));
+
+test('空值词条全局删除，不漏掉第二个词或后续重复，重复调用结果一致',()=>{
+    const s=custom([['草稿标记',''],['说明标记',''],['附注标记','']]),r=compile(s);
+    const input='草稿标记甲说明标记乙附注标记丙。'.repeat(30);
+    for(let i=0;i<5;i++){
+        const out=r.run(input);assert.equal(out.text,'甲乙丙。'.repeat(30));
+        assert.deepEqual(out.hits.map(h=>h.count),[30,30,30]);
+    }
+    assert.equal(displayCopy({mes:input,is_user:false},s,r).mes,'甲乙丙。'.repeat(30));
+    const request=[{mes:input,is_user:false}];transformPrompt(request,s,r);assert.equal(request[0].mes,'甲乙丙。'.repeat(30));
+});
+
+test('保护词可阻止空值词条删除，未保护的重复仍全部删除',()=>{
+    const s=custom([['标记','']],{exceptions:['完整标记词']}),r=compile(s);
+    assert.equal(r.run('完整标记词，标记，完整标记词，标记。').text,'完整标记词，，完整标记词，。');
+    const out=validateSettings({...s,exceptions:['完整标记词','完整标记词']});assert.deepEqual(out.exceptions,['完整标记词']);
+    assert.deepEqual(validateExceptions(['甲','','甲','乙']),['甲','乙']);
+    assert.throws(()=>validateExceptions(['甲'.repeat(2001)]));assert.throws(()=>validateExceptions(Array.from({length:5001},(_,i)=>String(i))));
+    assert.throws(()=>validateExceptions([null]));
+});
 test('批量支持三种分隔符、删除和注释',()=>{
     const r=parseBatch('# 注释\n原 → 新\n删 =>\n旧\t新\n');assert.deepEqual(r.map(x=>[x.from,x.to]),[['原','新'],['删',''],['旧','新']]);
     assert.throws(()=>parseBatch('正确→替换\n错误行'),/第 2 行/);

@@ -42,6 +42,10 @@
 .wr-category-tools{margin:0!important;font-size:.9em}
 .wr-category-tools[open]{flex-basis:100%;padding:0 12px 12px;background:var(--wr-tint,#8881);border-radius:8px}
 .wr-category-tools .text_pole{flex-basis:100%}
+.wr-library-check{border:1px solid var(--wr-border,#8885);border-radius:10px;padding:0 12px}
+.wr-library-check textarea,.wr-library-check select{width:100%;margin:8px 0}
+.wr-protection-context{display:grid;gap:12px}
+.wr-protection-context label>.text_pole,.wr-settings-content label>textarea{display:block;width:100%;margin:6px 0}
 .wr-row .text_pole{flex:1;width:100%;margin:0}
 .wr-add{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto;gap:8px}
 .wr-add .text_pole{width:100%}
