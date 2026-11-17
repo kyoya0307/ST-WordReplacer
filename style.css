@@ -43,3 +43,6 @@
  #wr-manager .wr-word-card[data-rule-id]:has(>.wr-check:first-child)>.wr-check:not(:first-child){grid-column:3}
  #wr-manager .wr-word-card[data-rule-id]:has(>.wr-check:first-child)>.wr-item-menu:not([open]){grid-column:4}
 }
+#wr-manager .wr-global-search{display:flex;align-items:center;gap:8px;margin:0 0 22px}#wr-manager .wr-global-search>input{flex:1}#wr-manager .wr-global-search>.wr-button{flex:none}
+#wr-manager .wr-search-results{display:grid;gap:12px;margin-bottom:18px}#wr-manager .wr-search-card{display:grid;gap:10px;padding:18px;border:1px solid var(--wr-line);border-radius:12px;background:var(--wr-surface);overflow-wrap:anywhere}#wr-manager .wr-search-card>.wr-row{justify-content:space-between}#wr-manager .wr-search-card .wr-rule-content{margin:0}#wr-manager .wr-search-source{color:var(--wr-accent)}#wr-manager .wr-search-replacement{color:var(--wr-accent)}
+@media(max-width:760px){#wr-manager .wr-global-search{margin-bottom:16px}#wr-manager .wr-search-card{padding:14px}#wr-manager .wr-search-card>.wr-row>b{flex-basis:100%}}

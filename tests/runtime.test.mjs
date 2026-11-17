@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { createSettings, compile } from '../engine.js';
 import { installRuntime } from '../runtime.js';
 
-function host({native=true,source='原词',iframe=false}={}) {
+function host({native=true,source='原词',iframe=false,rich=false}={}) {
     const settings={...createSettings(),contextual:false,groups:[{id:'test',name:'示例',enabled:true,rules:[
         {from:'原词',to:'新词',enabled:true},{from:'新词',to:'再改',enabled:true},
     ]}]};
     const handlers=new Map(),hooks=[],updates=[],errors=[];
+    const prose={nodeType:3,data:'原词'},widget={nodeType:1,tagName:'IFRAME',childNodes:[],getAttribute(){return null;}},root={nodeType:1,tagName:'DIV',childNodes:[prose,widget],getAttribute(){return null;}};
     const element={iframe,editing:false,reasoningEdit:false,output:source,
-        querySelector(selector){if(selector==='.mes_text')return null;return selector.includes('textarea')?(this.editing||this.reasoningEdit?{}:null):(this.iframe?{}:null);},
+        querySelector(selector){if(selector==='.mes_text')return rich?root:null;return selector.includes('textarea')?(this.editing||this.reasoningEdit?{}:null):(this.iframe?{}:null);},
         querySelectorAll(){return [];},getAttribute(){return '0';}};
     globalThis.document={querySelector:()=>element,querySelectorAll:()=>[element],getElementById:()=>null};
     const context={chat:[{mes:source,is_user:false,extra:{reasoning:'原词'},swipes:[source]}],
@@ -21,17 +22,17 @@ function host({native=true,source='原词',iframe=false}={}) {
     const format=(input,meta={})=>hooks.reduce((text,hook)=>hook.fn(text,{messageId:0,isUser:false,isSystem:false,isReasoning:false,...meta}),input);
     const emit=(key,id=0)=>{for(const fn of handlers.get(key)??[])fn(id);};
     const runtime=installRuntime(()=>context,()=>settings,()=>compile(settings),{onError:e=>errors.push(e)});
-    return {settings,context,element,hooks,handlers,updates,errors,format,emit,runtime};
+    return {settings,context,element,hooks,handlers,updates,errors,format,emit,runtime,prose,widget,root};
 }
 
 // 每个宿主的初始化刷新计时器在结束前排空，避免跨用例访问全局 DOM。
 const settle=()=>new Promise(resolve=>setTimeout(resolve,150));
 
-test('新版接口在 Markdown 前仅替换一次，保留源消息、代码、swipes 和推理',async()=>{
+test('新版接口对 HTML 消息保留原始输入以供可撤销 DOM 处理，保留 swipes 和推理',async()=>{
     const input='原词\n```html\n<html><body>原词</body></html>\n```',h=host({source:input});
     const original=structuredClone(h.context.chat);
     assert.equal(h.hooks.length,1);assert.equal(h.hooks[0].options.stage,'beforeRegex');
-    assert.equal(h.format(input),'新词\n```html\n<html><body>原词</body></html>\n```');
+    assert.equal(h.format(input),input);
     assert.equal(h.format('原词',{isReasoning:true}),'原词');
     assert.equal(h.format('原词',{isUser:true}),'原词');
     assert.equal(h.format('原词',{isSystem:true}),'原词');
@@ -49,6 +50,26 @@ test('原生渲染事件、设置刷新和总开关不会销毁已运行的 ifra
     h.settings.enabled=false;h.runtime.refresh();await settle();assert.equal(h.element.iframe,true);
     assert.equal(h.format(h.context.chat[0].mes),h.context.chat[0].mes);
     assert.equal(h.updates.length,0);
+});
+
+test('原生 HTML 消息的单条/分类/总开关及显示开关可恢复正文，保留原文与交互节点',async()=>{
+    const h=host({source:'原词\n```html\n<body>原词</body>\n```',iframe:true,rich:true}),source=structuredClone(h.context.chat);
+    assert.equal(h.format(h.context.chat[0].mes),h.context.chat[0].mes);
+    h.runtime.render(0);assert.equal(h.prose.data,'新词');
+    for(const key of ['rule','group','total','display','scope']){
+        if(key==='rule')h.settings.groups[0].rules[0].enabled=false;
+        if(key==='group')h.settings.groups[0].enabled=false;
+        if(key==='total')h.settings.enabled=false;
+        if(key==='display')h.settings.display=false;
+        if(key==='scope')h.settings.assistant=false;
+        h.runtime.render(0);assert.equal(h.prose.data,'原词',key);
+        h.settings.groups[0].rules[0].enabled=true;h.settings.groups[0].enabled=true;h.settings.enabled=true;h.settings.display=true;h.settings.assistant=true;
+        h.runtime.render(0);assert.equal(h.prose.data,'新词');
+    }
+    h.settings.groups[0].rules[0].to='';h.runtime.render(0);assert.equal(h.prose.data,'');
+    h.settings.enabled=false;h.runtime.render(0);assert.equal(h.prose.data,'原词');
+    assert.equal(h.root.childNodes[1],h.widget);assert.equal(h.element.iframe,true);assert.equal(h.updates.length,0);assert.deepEqual(h.context.chat,source);
+    await settle();assert.deepEqual(h.errors,[]);
 });
 
 test('普通消息改词或关闭时更新一次，配色与无变化刷新不重画，结果不串改',async()=>{

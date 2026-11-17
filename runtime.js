@@ -45,9 +45,14 @@ export function installRuntime(getContext,getSettings,getRunner,{loadNativeRegex
     const nativeFormatting=typeof formatter?.addHook==='function'&&!!formatter.stage?.BEFORE_REGEX;
     const formatted=new Map(),legacyRendered=new WeakMap(),editing=new Set(),domRecords=new WeakMap();
     const sourceText=m=>typeof m.extra?.display_text==='string'?m.extra.display_text:m.mes;
+    const hasMarkup=input=>/<!doctype\b|<\/?[a-z][^>]*>/i.test(input??'');
+    const deferFormatting=(input,message)=>hasMarkup(input)||hasMarkup(message&&sourceText(message));
     const transform=(input,meta)=>{
         const settings=getSettings(),source=getContext().chat[meta.messageId];
         if(meta.isReasoning||!settings.display||editing.has(Number(meta.messageId)))return input;
+        // Rich messages retain their source text until the DOM pass. Its reversible text-node
+        // records let settings changes restore prose while keeping live widgets in place.
+        if(deferFormatting(input,source))return input;
         const message={is_system:meta.isSystem||source?.is_system,is_user:meta.isUser??source?.is_user,extra:source?.extra};
         return scopeAllows(settings,message)?getRunner().run(input).text:input;
     };
@@ -57,7 +62,7 @@ export function installRuntime(getContext,getSettings,getRunner,{loadNativeRegex
             if(meta.isReasoning)return input;
             try{
                 const output=transform(input,meta),ctx=getContext(),id=Number(meta.messageId),message=ctx.chat[id];
-                if(message&&Number.isInteger(id)&&id>=0)formatted.set(id,{chat:ctx.chat,message,source:sourceText(message),input,output,meta});
+                if(message&&Number.isInteger(id)&&id>=0)formatted.set(id,{chat:ctx.chat,message,source:sourceText(message),input,output,meta,deferred:deferFormatting(input,message)});
                 return output;
             }catch(error){onError(error);return input;}
         },{stage:formatter.stage.BEFORE_REGEX,order:formatter.order?.EARLY??10});
@@ -71,7 +76,7 @@ export function installRuntime(getContext,getSettings,getRunner,{loadNativeRegex
         });
     }
     const hasFrontend=(el,input)=>
-        /<!doctype\b|<\/?[a-z][^>]*>/i.test(input??'')||
+        hasMarkup(input)||
         !!el?.querySelector('iframe,object,embed,script,style,custom-style')||
         [...(el?.querySelectorAll('pre code')??[])].some(code=>/<\/?[a-z][^>]*>/i.test(code.textContent));
     const render=id=>{
@@ -82,10 +87,10 @@ export function installRuntime(getContext,getSettings,getRunner,{loadNativeRegex
         const input=sourceText(m);
         // 含界面的消息不整条重画；无格式化接口时，只就地更新可读正文。
         if(hasFrontend(el,input)){
-            if(!nativeFormatting){
+            if(!nativeFormatting||hasMarkup(input)||formatted.get(id)?.deferred){
                 const root=el.querySelector('.mes_text');
                 if(root){
-                    const s=getSettings(),enabled=s.display&&scopeAllows(s,m);
+                    const s=getSettings(),enabled=s.display&&scopeAllows(s,m)&&!editing.has(id);
                     patchDisplayText(root,s,enabled?getRunner():{run:text=>({text,hits:[],edits:[]})},domRecords);
                 }
             }
@@ -125,6 +130,11 @@ export function installRuntime(getContext,getSettings,getRunner,{loadNativeRegex
         for(const key of ['CHAT_CHANGED','MORE_MESSAGES_LOADED'])if(types[key])c.eventSource.on(types[key],refresh);
         const chat=document.getElementById('chat');
         if(chat){const observer=new window.MutationObserver(refresh);observer.observe(chat,{childList:true});}
+    }else{
+        for(const key of ['CHARACTER_MESSAGE_RENDERED','USER_MESSAGE_RENDERED','MESSAGE_SWIPED','MESSAGE_UPDATED'])if(types[key])c.eventSource.on(types[key],id=>{
+            setTimeout(()=>{try{render(id);}catch(error){onError(error);}},0);
+        });
+        for(const key of ['CHAT_CHANGED','MORE_MESSAGES_LOADED'])if(types[key])c.eventSource.on(types[key],refresh);
     }
     globalThis.STWordReplacerPrompt=async(messages,_size,_abort,type)=>{
         if(!getSettings().prompt||!getSettings().enabled)return;
