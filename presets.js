@@ -7,7 +7,7 @@ export const TRIGGER_PRESETS={
     trimPrefix:{title:'去掉固定开头',kind:'pattern',action:'trimPrefix',extra:true,description:'匹配固定结构后，去掉开头并保留其余文字。',example:'极 ＋ 1 个汉字 ＋ 的 → 极轻的变为轻的'},
     markers:{title:'标记内容清理',kind:'markers',action:'word',description:'删除一对起止标记及其包裹的内容，支持跨行。',example:'[示例开始] … [示例结束] → 删除这一段'},
     correction:{title:'自我纠错清理',kind:'correction',action:'correction',description:'填写需要避开的词，清理破折号后的自我纠错过程，接回修正后的正文。',example:'误写分句——不对，重复解释，修正后的正文 → 修正后的正文'},
-    context:{title:'保护语境规则',kind:'context',action:'context',description:'使用既有语境模板识别特定表达，并按保留条件保护正常叙述。',example:'查看每个模板的触发内容、保留条件和试用效果'},
+    context:{title:'按语境改词',kind:'context',action:'context',description:'下方每张卡片是一条独立的改词规则；顶部开关控制下方全部规则。',example:'示例按单条规则启用后的当前配置试算，点击可试用。完整词库的结果可在“测试效果”中查看。'},
     sentence:{title:'完整句子删除',kind:'keywords',action:'sentence',matchMode:'any',extra:true,description:'任意一个词或短语出现时，删除从句首到句末的完整句子。',example:'【待删】 → 删除包含它的完整句子'},
     text:{title:'匹配词段删除',kind:'keywords',action:'word',matchMode:'any',extra:true,description:'任意一个词或短语出现时，直接删除该匹配文字。',example:'正文【待删】继续 → 正文继续'},
     custom:{title:'其他已有规则',extra:true,description:'集中查看已有的自定义边界、指定替换和其他特殊处理。',example:'沿用已有触发条件与处理方式'},

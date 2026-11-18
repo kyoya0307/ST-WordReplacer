@@ -60,12 +60,23 @@ export function filterReason(input,hit,filters){
     }
     return '';
 }
-export function keywordMatches(input,r){
+export function filterExplanation(input,hit,filters,reason){
+    if(!reason||!filters)return reason;
+    const before=input.slice(0,hit.start),after=input.slice(hit.end),range=contextRange(input,hit,filters.scope),part=input.slice(range.start,range.end);
+    for(const [key,test]of [['exceptBefore',s=>before.endsWith(s)],['exceptAfter',s=>after.startsWith(s)],['excludes',s=>part.includes(s)]]){
+        const value=filters[key]?.find(test);if(value)return `${reason}：${FILTER_FIELDS[key]}“${value}”`;
+    }
+    if(reason==='前接条件未命中')return `${reason}：需要前接 ${filters.before.join(' / ')}`;
+    if(reason==='后接条件未命中')return `${reason}：需要后接 ${filters.after.join(' / ')}`;
+    if(reason==='范围内的伴随词尚未齐全')return `${reason}：${filters.contains.join(' / ')}`;
+    return reason;
+}
+export function keywordMatches(input,r,protectedRanges=[],onProtected=()=>{}){
     const groups=[];
     for(const unit of sentenceUnits(input)){
         const ranges=r.filters?.scope==='clause'?unit.clauses:[{start:unit.start,end:unit.contentEnd}];
         for(const range of ranges){
-            const hits=[];r.keywords.forEach((word,k)=>{let cursor=range.start;while(cursor<range.end){const start=input.indexOf(word,cursor);if(start<0||start+word.length>range.end)break;hits.push({start,end:start+word.length,key:k});cursor=start+word.length;}});
+            const hits=[];r.keywords.forEach((word,k)=>{let cursor=range.start;while(cursor<range.end){const start=input.indexOf(word,cursor);if(start<0||start+word.length>range.end)break;const hit={start,end:start+word.length,key:k};if(!protectedRanges.some(p=>p.start<hit.end&&p.end>hit.start))hits.push(hit);else onProtected(hit);cursor=start+word.length;}});
             hits.sort((a,b)=>a.start-b.start||b.end-a.end);
             if(r.matchMode==='all'){
                 if(new Set(hits.map(h=>h.key)).size!==r.keywords.length)continue;

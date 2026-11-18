@@ -49,7 +49,6 @@
 #wr-manager .wr-context-card,#wr-manager .wr-audit-row,#wr-manager .wr-output,
 #wr-manager .wr-paste-panel,#wr-manager .wr-tabs,#wr-manager .wr-sidebar,
 #wr-manager .wr-status,#wr-manager .wr-context-test,
-#wr-manager .wr-hit {border-color:var(--wr-border)}
 #wr-manager .wr-conflict,#wr-manager .wr-warn {color:var(--wr-warn)}
 #wr-manager .wr-conflict-row {border-left-color:var(--wr-warn)}
 #wr-manager .wr-error {color:var(--wr-error)}

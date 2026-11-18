@@ -1,10 +1,12 @@
 import { uid, THEMES, compile, inspectRules, parseBatch, setReplacement, createTransfer, pasteTransfer, planPaste, validateSettings } from './engine.js';
 import { groupState, syncGroups, ACTIONS, KINDS, validateRule, ruleSummary, literalConflicts,contextGroup } from './model.js';
-import { CONTEXT_RULES, CONTEXT_REVIEWS, CONTEXT_MATCH_TEXT, CONTEXT_SAFETY,validateContextOptions } from './legacy.js';
+import { CONTEXT_RULES, CONTEXT_REVIEWS, CONTEXT_SAFETY,contextKeep,validateContextKeep } from './legacy.js';
 import {FILTER_FIELDS,FILTER_EXAMPLES,BOUNDARIES,validateFilters} from './filters.js';
 import {searchEntries} from './search.js';
 import {TRIGGER_PRESETS,triggerPreset,triggerTitle,presetEntries,presetDraft,effectiveAction} from './presets.js';
 import {WORD_ORDERS,orderedWordRules,wordPageSize,wordRulePage} from './words-view.js';
+import {CONTEXT_GUIDES} from './context-guide.js';
+import {createHitInspector} from './hit-inspector.js';
 
 const node=(tag,attrs={},...children)=>{
     const e=document.createElement(tag);
@@ -68,10 +70,13 @@ export class Manager{
     }
     renderProtectionTabs(){
         const tabs=node('nav',{class:'wr-protection-tabs','aria-label':'保护内容类型'});
-        for(const [mode,title]of [['terms','保护词'],['rules','保护规则']])tabs.append(this.btn(title,()=>{
+        for(const [mode,title]of [['terms','保护词'],['rules','内置保护规则']])tabs.append(this.btn(title,()=>{
             this.protectionMode=mode;this.view='';this.search='';this.page=0;this.draft=null;this.selection.clear();this.selecting=false;this.render();this.dialog.scrollTop=0;
         },{'aria-pressed':String(this.protectionMode===mode),class:`wr-button menu_button ${this.protectionMode===mode?'wr-active':''}`}));
-        this.body.append(tabs);
+        const defaults=node('details',{class:'wr-advanced wr-protection-defaults'},node('summary',{},'通用保护'),
+            this.row(this.check('保护《书名》',this.s.protectTitles,v=>{this.s.protectTitles=v;this.save();}),this.check('保护代码块',this.s.protectCode,v=>{this.s.protectCode=v;this.save();})),
+            node('small',{},'按成对书名号与代码标记识别范围。特定词语的正常用法在内置保护规则中处理。'));
+        this.body.append(tabs,defaults);
     }
     showView(view){this.view=view;this.render();this.dialog.scrollTop=0;}
     renderSearchBar(){
@@ -125,8 +130,9 @@ export class Manager{
     choosePreset(id){if(id==='context'){this.tab='保护词';this.protectionMode='rules';}this.conditionMode='presets';this.conditionPreset=id;this.page=0;this.draft=null;this.selection.clear();this.render();this.dialog.scrollTop=0;}
     presetCheck(id){
         const entries=presetEntries(this.s,id),state=groupState({rules:entries.map(e=>e.rule)});
-        const control=this.check('启用此模板',state.checked,value=>{for(const {rule}of entries)rule.enabled=value;this.save();this.render();});
-        control.querySelector('input').setAttribute('aria-label',`切换模板启停 ${TRIGGER_PRESETS[id].title}`);control.querySelector('input').indeterminate=state.mixed;control.querySelector('input').disabled=!entries.length;return control;
+        const label=id==='context'?`启用下方全部规则（${entries.length} 条）`:`启用全部「${TRIGGER_PRESETS[id].title}」规则`;
+        const control=this.check(label,state.checked,value=>{for(const {rule}of entries)rule.enabled=value;this.save();this.render();});
+        control.querySelector('input').indeterminate=state.mixed;control.querySelector('input').disabled=!entries.length;return control;
     }
     presetSheet(){
         const sheet=node('section',{class:'wr-category-sheet','aria-label':'触发模板面板'}),list=node('div',{class:'wr-sheet-list'});
@@ -147,7 +153,7 @@ export class Manager{
         const protecting=this.tab==='保护词',id=protecting?'context':this.conditionPreset;this.conditionPreset=id;
         const p=TRIGGER_PRESETS[id]??TRIGGER_PRESETS.keywords,entries=presetEntries(this.s,id),state=groupState({rules:entries.map(e=>e.rule)});
         const max=Math.max(0,Math.ceil(entries.length/60)-1);this.page=Math.min(max,this.page);
-        this.body.append(node('div',{class:'wr-section-head'},node('div',{},node('h3',{},protecting?'保护规则':'条件规则'),protecting?null:node('small',{},'选择触发模板，填写需要处理的内容。')),
+        this.body.append(node('div',{class:'wr-section-head'},node('div',{},node('h3',{},protecting?'特定表达的处理与保留':'条件规则'),protecting?null:node('small',{},'选择触发模板，填写需要处理的内容。')),
             this.row(...(protecting?[]:[this.btn('分类与批量整理',()=>{this.conditionMode='categories';this.draft=null;this.render();})]),this.btn('测试效果',()=>this.showView('测试效果')))));
         const sidebar=node('aside',{class:'wr-sidebar'},node('b',{},'触发模板'));
         for(const [key,preset]of protecting?[]:this.visiblePresets()){
@@ -167,13 +173,14 @@ export class Manager{
             const title=triggerTitle(r),menu=node('details',{class:'wr-item-menu'},node('summary',{'aria-label':`更多操作 ${title}`},'•••'),
                 this.btn('复制到分类',()=>this.transferItem(group,r,false)),this.btn('移动到分类',()=>this.transferItem(group,r,true)),this.btn('删除触发内容',()=>{group.rules=group.rules.filter(rule=>rule!==r);this.save();this.render();}));
             list.append(node('article',{class:`wr-template-rule ${r.enabled?'':'wr-rule-off'}`,'data-rule-id':r.id},
-                this.row(this.check(title,r.enabled,value=>{r.enabled=value;this.save();this.render();}),node('span',{class:'wr-badge'},ACTIONS[effectiveAction(r,group)]),menu),
-                this.ruleContent(r),node('small',{},`来源分类：${group.name}`),this.btn('编辑触发 / 测试',()=>this.startRule(group,r.kind,r))));
+                this.row(this.check(title,r.enabled,value=>{r.enabled=value;this.save();this.render();}),r.kind==='context'?null:node('span',{class:'wr-badge'},ACTIONS[effectiveAction(r,group)]),menu),
+                this.ruleContent(r,group),r.kind==='context'?null:node('small',{},`来源分类：${group.name}`),this.btn(r.kind==='context'?'编辑规则 / 试用':'编辑触发 / 测试',()=>this.startRule(group,r.kind,r))));
+            if(r.kind==='context')menu.append(node('small',{},`存放分类：${group.name}`),node('small',{},'复制、移动与分类导出使用此分类。'));
         }
         if(!entries.length)list.append(node('div',{class:'wr-empty'},'填写触发内容后，会在这里显示具体内容与启停状态。'));
         if(max)content.append(this.row(this.btn('上一页',()=>{this.page--;this.render();this.dialog.scrollTop=0;},{disabled:this.page===0}),node('small',{},`${this.page+1}/${max+1} 页 · ${entries.length} 条触发内容`),this.btn('下一页',()=>{this.page++;this.render();this.dialog.scrollTop=0;},{disabled:this.page===max})));
         if(this.draft){const g=this.draft.group??this.s.ruleGroups.find(g=>g.id===this.draft.groupId);if(g)this.renderRuleEditor(content,g);}
-        if(id==='context')this.renderBuiltin(content);
+        
     }
     choose(id){this.selected[this.tab]=id;this.search='';this.page=0;this.selection.clear();this.draft=null;this.render();this.dialog.scrollTop=0;}
     newGroup(){
@@ -335,14 +342,37 @@ export class Manager{
         this.draft={groupId:g.id,group:g,presetId:chosen,originalId:r?.id,data,sample:kind==='correction'?`她的${data.keywords[0]??'翅膀'}——不对，她没有${data.keywords[0]??'翅膀'}，她的手臂伸向窗外。`:chosen==='together'?'她点头，声音传来，语调平静。她坐下。':kind==='context'?CONTEXT_REVIEWS[r?.template??'kinship'].sample:kind==='pattern'?'响起极轻的脚步声，随后传来极重的撞击声。':kind==='markers'?'正文。[示例开始]这段是示例内容。[示例结束]继续正文。':'她点头，【待删】这句是示例。她坐下。'};
         this.render();this.pane.querySelector('.wr-rule-editor')?.scrollIntoView?.({block:'nearest'});
     }
-    ruleContent(r){
+    contextGuide(r,g,onExample){
+        const guide=CONTEXT_GUIDES[r.template],content=node('section',{class:'wr-context-guide','data-context-guide':r.template});
+        const group=g??this.s.ruleGroups.find(group=>group.rules.some(item=>item.id===r.id))??{id:'context-preview',name:'当前规则',enabled:true,rules:[]};
+        const engine=compile({...this.s,enabled:true,groups:[],sentenceRules:[],contextual:false,ruleGroups:[{...group,enabled:true,rules:[{...r,enabled:true}]}]});
+        const example=input=>{
+            const result=engine.run(input,{explain:true}),same=input===result.text;
+            const line=this.btn('',()=>onExample?onExample(input):(()=>{this.startRule(group,'context',r);this.draft.sample=input;this.render();this.pane.querySelector('.wr-rule-editor')?.scrollIntoView?.({block:'nearest'});})(),{class:'wr-button wr-context-example','aria-label':`试用示例：${input}`});
+            line.append(node('span',{},input),node('span',{class:'wr-context-arrow','aria-hidden':'true'},'→'),node('span',{class:'wr-context-result'},same?'原样保留':result.text||'〔删除匹配文字〕'));
+            if(result.preserved?.length)line.title=result.preserved.map(p=>p.reason).join('；');
+            return line;
+        };
+        content.append(node('div',{},node('b',{},'处理对象'),node('p',{},guide.target)),node('small',{},guide.meaning),
+            node('b',{},'修改前 → 当前结果'),example(guide.change),node('b',{},'正常用法检查'),example(guide.normal[0]),
+            node('details',{class:'wr-context-more'},node('summary',{},`更多正常用法（${guide.normal.length-1} 例）`),...guide.normal.slice(1).map(example)),
+            node('details',{class:'wr-context-more'},node('summary',{},'完整匹配范围与保留条件'),node('p',{},guide.details),
+                node('p',{},guide.protection),node('small',{},`正常用法保护：${r.safeContext!==false?'已开启':'已关闭'}`)));
+        content.refresh=()=>{
+            const open=[...content.querySelectorAll('details')].map(e=>e.open),next=this.contextGuide(r,g,onExample);
+            next.querySelectorAll('details').forEach((e,i)=>e.open=open[i]??false);content.replaceWith(next);
+        };
+        return content;
+    }
+    refreshContextGuides(){this.pane.querySelectorAll('.wr-context-guide').forEach(e=>e.refresh?.());}
+    ruleContent(r,g=null){
         const content=node('div',{class:'wr-rule-content'}),chips=values=>node('div',{class:'wr-keyword-chips'},...values.map(v=>node('span',{},v)));
         if(r.kind==='correction')content.append(node('small',{},'需要避开的词'),chips(r.keywords),node('small',{},'破折号后的纠错提示词'),chips(r.cues));
         if(r.kind==='keywords')content.append(node('small',{},r.matchMode==='all'?'共同触发词':'触发词'),chips(r.keywords));
         if(r.kind==='pattern')content.append(node('small',{},'触发结构'),chips([r.prefix,`${r.min===r.max?r.min:`${r.min}～${r.max}`} 个汉字`,r.suffix]));
         if(r.kind==='markers')content.append(node('small',{},'开始标记 → 结束标记'),chips([r.start,r.end]));
         if(r.kind==='boundary')content.append(node('small',{},'触发词'),chips([r.keyword]),node('small',{},`起始标点：${r.startChars}　结束标点：${r.endChars}`));
-        if(r.kind==='context')content.append(node('small',{},'触发内容'),node('p',{},CONTEXT_MATCH_TEXT[r.template]),r.action==='context'?node('small',{},`处理：${CONTEXT_RULES.find(t=>t.id===r.template).action}`):null);
+        if(r.kind==='context')content.append(this.contextGuide(r,g));
         if(r.action==='replace')content.append(node('small',{},'替换为'),chips([r.to===''?'〔空文本〕':r.to]));
         if(r.filters){
             for(const [key,label]of Object.entries(FILTER_FIELDS))if(r.filters[key]?.length)content.append(node('small',{},`${label}${['contains','excludes'].includes(key)?`（${r.filters.scope==='clause'?'同分句':'同一句'}）`:''}`),chips(r.filters[key]));
@@ -384,15 +414,17 @@ export class Manager{
         const draft=this.draft,r=draft.data,box=node('section',{class:'wr-rule-editor','aria-label':'规则编辑器'}),form=node('div',{class:'wr-template-form'}),sandbox=node('div',{class:'wr-rule-sandbox'});
         const fixed=draft.presetId&&draft.presetId!=='custom',preset=TRIGGER_PRESETS[draft.presetId];
         const active=()=>draft===this.draft;
-        const sample=this.area(draft.sample,'测试原文',v=>{draft.sample=v;preview();},5),marked=node('div',{class:'wr-output wr-sentence-highlight'}),output=node('pre',{class:'wr-output wr-result'}),state=node('small',{role:'status'}),preserved=node('div',{class:'wr-preserved'});
+        const sample=this.area(draft.sample,'测试原文',v=>{draft.sample=v;preview();},5),marked=node('div',{class:'wr-output wr-sentence-highlight'}),output=node('pre',{class:'wr-output wr-result'}),state=node('small',{role:'status'});
+        const inspector=createHitInspector(marked,e=>this.locateHit(e));
         const preview=()=>{
             if(!active())return;
             try{
                 const valid=validateRule({...r,action:r.inheritAction?g.defaultAction:r.action,enabled:true}),test={...this.s,enabled:true,groups:[],sentenceRules:[],contextual:false,ruleGroups:[{...g,enabled:true,rules:[valid]}]};
-                const result=compile(test).run(sample.value,{trace:true,explain:true});output.textContent=result.text;marked.replaceChildren();let pos=0;
-                for(const edit of result.edits??[]){marked.append(document.createTextNode(sample.value.slice(pos,edit.start)),node('mark',{},sample.value.slice(edit.start,edit.end)));pos=edit.end;}marked.append(document.createTextNode(sample.value.slice(pos)));
+                valid.id=draft.originalId??r.id;
+                const result=compile(test).run(sample.value,{trace:true,explain:true});output.textContent=result.text;
                 state.textContent=`当前规则试用 · ${result.hits.reduce((n,h)=>n+h.count,0)} 次处理 · ${result.preserved?.length??0} 条保留记录`;state.classList.remove('wr-error');
-                preserved.replaceChildren(...(result.preserved??[]).slice(0,8).map(p=>node('small',{},`${p.text}：${p.reason}`)));
+                inspector.update(sample.value,result);
+                if(r.kind==='context')this.refreshContextGuides();
             }catch(e){state.textContent=e.message;state.classList.add('wr-error');output.textContent='填写匹配条件后显示结果。';marked.textContent=sample.value;}
         };
         const update=(key,v)=>{r[key]=v;preview();};
@@ -418,17 +450,18 @@ export class Manager{
         if(r.kind==='context'){
             const review=CONTEXT_REVIEWS[r.template];
             form.append(this.label('选择语境模板',this.select(r.template,'选择语境模板',Object.fromEntries(CONTEXT_RULES.map(t=>[t.id,t.name])),v=>{r.template=v;draft.sample=CONTEXT_REVIEWS[v].sample;this.render();})),
-                node('section',{class:'wr-rule-review'},node('b',{},'旧规则检查'),node('p',{},review.finding),node('small',{},review.improvement),node('small',{},`执行位置：词库${CONTEXT_RULES.find(t=>t.id===r.template).stage==='before'?'之前':'之后'}`)),
+                this.contextGuide(r,g,input=>{draft.sample=input;sample.value=input;preview();}),
+                this.contextKeepEditor(r,preview),
                 CONTEXT_SAFETY[r.template]?this.check(CONTEXT_SAFETY[r.template],r.safeContext!==false,v=>update('safeContext',v)):node('small',{},'组合匹配可通过补充条件设置前后文与保留词。'),
-                node('details',{},node('summary',{},'查看模板的匹配内容'),node('p',{},CONTEXT_MATCH_TEXT[r.template])),
+                node('details',{class:'wr-rule-review'},node('summary',{},'匹配方式与执行顺序'),node('p',{},review.finding),node('small',{},review.improvement),node('small',{},`执行位置：词库${CONTEXT_RULES.find(t=>t.id===r.template).stage==='before'?'之前':'之后'}`)),
                 this.btn('载入保留示例',()=>{draft.sample=review.sample;sample.value=draft.sample;preview();}));
         }
         const options={word:ACTIONS.word,clause:ACTIONS.clause,sentence:ACTIONS.sentence,replace:ACTIONS.replace};if(r.kind==='pattern')options.trimPrefix=ACTIONS.trimPrefix;if(r.matchMode==='all')delete options.replace;if(r.kind==='boundary'){delete options.word;delete options.replace;}
-        if(fixed)form.append(node('div',{class:'wr-fixed-action'},node('small',{},'模板处理方式'),node('b',{},ACTIONS[r.action])));
-        else form.append(this.label('处理方式',this.select(r.inheritAction?'inherit':r.action,'处理范围',r.kind==='context'?{context:ACTIONS.context,word:ACTIONS.word,replace:ACTIONS.replace}:r.kind==='boundary'?{clause:'按指定边界删除'}:{inherit:`沿用分类：${ACTIONS[g.defaultAction]}`,...options},v=>{r.inheritAction=v==='inherit';if(!r.inheritAction)r.action=v;this.render();})));
+        if(fixed&&r.kind!=='context')form.append(node('div',{class:'wr-fixed-action'},node('small',{},'模板处理方式'),node('b',{},ACTIONS[r.action])));
+        else form.append(this.label('处理方式',this.select(r.inheritAction?'inherit':r.action,'处理范围',r.kind==='context'?{context:'使用模板默认改法',word:ACTIONS.word,replace:ACTIONS.replace}:r.kind==='boundary'?{clause:'按指定边界删除'}:{inherit:`沿用分类：${ACTIONS[g.defaultAction]}`,...options},v=>{r.inheritAction=v==='inherit';if(!r.inheritAction)r.action=v;this.render();})));
         if(!r.inheritAction&&r.action==='replace')form.append(this.label('替换为',this.area(r.to??'','替换文字',v=>update('to',v),3)));
-        form.append(this.renderFilters(r,preview),node('details',{class:'wr-more-options'},node('summary',{},'备注（可选）'),this.label('备注名称',this.field(r.name,'备注名称（可选）',v=>update('name',v),{maxLength:100}))),node('details',{class:'wr-more-options'},node('summary',{},'范围与保护'),r.kind==='context'?node('small',{},'语境模板遵守保护词与代码块保护。'):this.check('遵守保护词与代码块保护',r.respectProtection,v=>update('respectProtection',v)),node('small',{},'匹配到保护内容时保留相应文字或句段。')));
-        sandbox.append(node('b',{},'3 · 查看效果'),sample,node('small',{},'高亮部分为匹配范围'),marked,node('b',{},'处理后'),output,state,preserved);
+        form.append(this.renderFilters(r,preview),node('details',{class:'wr-more-options'},node('summary',{},'备注（可选）'),this.label('备注名称',this.field(r.name,'备注名称（可选）',v=>update('name',v),{maxLength:100}))),node('details',{class:'wr-more-options'},node('summary',{},'进阶：保护优先级'),r.kind==='context'?node('small',{},'保护词优先于本条语境处理。'):this.label('与保护内容重叠时',this.select(r.respectProtection?'protect':'clean','保护优先级',{protect:'保护优先：保留命中的词',clean:'清理优先：执行本条规则'},v=>update('respectProtection',v==='protect'))),node('small',{},'保护优先时，只保留保护词和已开启的书名、代码范围，其余命中内容继续清理。')));
+        sandbox.append(node('b',{},'3 · 查看效果'),sample,node('small',{},'高亮部分为匹配范围'),marked,node('b',{},'处理后'),output,state,inspector.element);
         box.append(node('h4',{},draft.originalId?'编辑触发内容':'添加触发内容'),node('div',{class:'wr-editor-grid'},form,sandbox),node('div',{class:'wr-editor-actions'},this.btn('查看效果 ↓',()=>sandbox.scrollIntoView?.({block:'start'})),this.btn('取消',()=>{this.draft=null;this.render();}),this.btn(draft.originalId?'保存修改':'添加并启用',()=>{
             const valid=validateRule(r),old=g.rules.find(x=>x.id===draft.originalId);if(!this.s.ruleGroups.includes(g)&&this.s.ruleGroups.length>=200)throw new Error('规则分类数量已达到 200。');if(old)g.rules[g.rules.indexOf(old)]={...valid,id:old.id};else{
                 if(this.s.ruleGroups.reduce((n,g)=>n+g.rules.length,0)>=20000)throw new Error('条件规则数量已达到 20000。');g.rules.push(valid);
@@ -469,12 +502,12 @@ export class Manager{
         }),this.btn('取消',()=>panel.remove())));this.body.prepend(panel);
     }
     renderProtection(content,g){
-        const all=g.targets.includes('all'),range=node('details',{class:'wr-advanced'},node('summary',{},all?'保护范围：全部处理':`保护范围：${g.targets.length} 个指定分类`));
+        const all=g.targets.includes('all'),range=node('details',{class:'wr-advanced'},node('summary',{},all?'应用于：全部处理':`应用于：${g.targets.length} 个指定分类`));
         range.append(this.check('全部处理',all,v=>{g.targets=v?['all']:this.s.groups.length?[this.s.groups[0].id]:['context'];this.save();this.render();}));
         if(!all)for(const target of [...this.s.groups,...this.s.ruleGroups,{id:'context',name:'内置语境处理'}])range.append(this.check(target.name,g.targets.includes(target.id),v=>{
             if(!v&&g.targets.length===1)throw new Error('请选择至少一个保护范围。');g.targets=v?[...g.targets,target.id]:g.targets.filter(x=>x!==target.id);this.save();
         }));
-        const input=this.field('','需要保持原样的词或短语',null,{maxLength:2000}),list=node('div',{class:'wr-rule-list'});
+        const input=this.field('','补充需要保持原样的词或短语',null,{maxLength:2000}),list=node('div',{class:'wr-rule-list'});
         const draw=()=>{list.replaceChildren();for(const term of g.terms){
             list.append(node('article',{class:'wr-word-card'},...(this.selecting?[this.check('选择',this.selection.has(term.id),v=>{v?this.selection.add(term.id):this.selection.delete(term.id);bulk.update();})]:[]),node('span',{class:'wr-original'},term.text),this.check('启用',term.enabled,v=>{term.enabled=v;this.save();}),this.btn('编辑',()=>this.inlinePrompt('编辑保护词','保护词',term.text,v=>{term.text=v;this.save();this.render();},2000)),
                 node('details',{class:'wr-item-menu'},node('summary',{'aria-label':`更多操作 ${term.text}`},'•••'),this.btn('复制到分类',()=>this.transferItem(g,term,false)),this.btn('移动到分类',()=>this.transferItem(g,term,true)),this.btn('删除',()=>{g.terms=g.terms.filter(t=>t!==term);this.save();draw();}))));
@@ -509,19 +542,25 @@ export class Manager{
             this.btn('启用所选',()=>{g[key].filter(r=>this.selection.has(r.id)).forEach(r=>r.enabled=true);this.save();draw();}),this.btn('停用所选',()=>{g[key].filter(r=>this.selection.has(r.id)).forEach(r=>r.enabled=false);this.save();draw();})));
         update();return {toggle,bar,update};
     }
-    renderBuiltin(content){
-        const present=this.s.ruleGroups.filter(g=>g.rules.some(r=>r.kind==='context'));
-        const box=node('details',{class:'wr-advanced wr-builtin'},node('summary',{},'语境模板与共享保护表'));
-        box.append(node('small',{},'7 类语境模板使用普通规则卡片管理，支持分类、排序、补充条件和逐条试用。'));
-        if(!present.length)box.append(this.btn('添加语境规则分类',()=>{
-            if(this.s.ruleGroups.length>=200)throw new Error('规则分类上限为 200。');const g=contextGroup(this.s.contextOptions);this.s.ruleGroups.push(g);this.s.contextual=false;this.save();if(this.conditionMode==='presets'){this.conditionPreset='context';this.render();}else this.choose(g.id);
-        }));
-        const nouns=this.area(this.s.contextOptions.nouns.join('\n'),'语境名词保护表',v=>{this.s.contextOptions=validateContextOptions({...this.s.contextOptions,nouns:v.split(/\r?\n/).map(s=>s.trim()).filter(Boolean)});this.save();});
-        const verbs=this.field(this.s.contextOptions.verbs,'语境动作保护字',v=>{this.s.contextOptions=validateContextOptions({...this.s.contextOptions,verbs:v.replace(/\s/g,'')});this.save();});
-        box.append(node('details',{},node('summary',{},'语境保护表'),this.label('后接这些名词时保留',nouns),this.label('前接这些动作字时保留',verbs)));content.append(box);
+    contextKeepEditor(r,preview){
+        if(!['direction','kinship','prefix'].includes(r.template))return null;
+        r.contextKeep??=contextKeep(this.s.contextOptions);
+        const update=(key,value)=>{r.contextKeep=validateContextKeep({...r.contextKeep,[key]:value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean)});preview();};
+        return node('details',{class:'wr-advanced wr-context-keep'},node('summary',{},'本规则的正常用法保留条件'),
+            this.label('后接这些词时保留',this.area(r.contextKeep.after.join('\n'),'本规则后接保留词',v=>update('after',v)), '例如“手稿”：她娘的手稿会保留。每行一项。'),
+            this.label('前接这些词时保留',this.area(r.contextKeep.before.join('\n'),'本规则前接保留词',v=>update('before',v)), '每行一项，可以填写完整短语。'),
+            node('small',{},'修改后随本条规则保存。固定名称或特殊短语可直接加入保护词。'));
+    }
+    locateHit(event){
+        const type=event.sourceType==='manual'?'保护词':event.sourceType==='dictionary'?'词库':'条件规则';
+        const groups=this.s[type==='保护词'?'protectionGroups':type==='词库'?'groups':'ruleGroups'];
+        const group=groups.find(g=>g.id===event.groupId),item=group?.[type==='保护词'?'terms':'rules'].find(r=>r.id===event.ruleId);
+        if(!item){this.notice('这条记录的来源已变化，请重新测试。',true);return;}
+        this.locateResult({type,group,item});
     }
     renderTest(body){
-        const presetView=(this.tab==='条件规则'&&this.conditionMode==='presets')||(this.tab==='保护词'&&this.protectionMode==='rules'),selected=this.tab==='设置'||presetView?null:this.current(),input=this.area(this.testInput??'','粘贴一段文字，查看处理效果',v=>{this.testInput=v;draw();},7),output=node('pre',{class:'wr-output wr-result'}),marked=node('div',{class:'wr-output wr-sentence-highlight'}),hits=node('details',{class:'wr-advanced'},node('summary',{},'查看命中详情')),state=node('p',{});
+        const presetView=(this.tab==='条件规则'&&this.conditionMode==='presets')||(this.tab==='保护词'&&this.protectionMode==='rules'),selected=this.tab==='设置'||presetView?null:this.current(),input=this.area(this.testInput??'','粘贴一段文字，查看处理效果',v=>{this.testInput=v;draw();},7),output=node('pre',{class:'wr-output wr-result'}),marked=node('div',{class:'wr-output wr-sentence-highlight'}),state=node('p',{});
+        const inspector=createHitInspector(marked,e=>this.locateHit(e));
         const mode=this.select('all','测试范围',{all:'全部已启用内容',...(presetView?{category:'当前触发模板'}:selected?{category:'当前分类'}:{})},()=>draw());
         const protection=this.field('','选中测试结果中的文字，或输入保护词',null,{maxLength:2000});
         const draw=()=>{
@@ -531,17 +570,15 @@ export class Manager{
                 else if(this.tab==='保护词')source.protectionGroups=[selected];
                 else{source.groups=this.tab==='词库'?[selected]:[];source.ruleGroups=this.tab==='条件规则'?[{...selected,rules:this.items(selected)}]:[];source.contextual=false;source.sentenceRules=[];}
             }
-            const result=compile(source).run(input.value,{trace:true,explain:true});output.textContent=result.text;marked.replaceChildren();let pos=0;
-            for(const edit of result.edits??[]){marked.append(document.createTextNode(input.value.slice(pos,edit.start)),node('mark',{},input.value.slice(edit.start,edit.end)));pos=edit.end;}marked.append(document.createTextNode(input.value.slice(pos)));
+            const result=compile(source).run(input.value,{trace:true,explain:true});output.textContent=result.text;
             state.textContent=`${this.s.enabled?'处理已启用':'总开关已暂停'} · ${result.hits.reduce((n,h)=>n+h.count,0)} 次命中 · ${this.s.protectionGroups.reduce((n,g)=>n+g.terms.filter(t=>t.enabled&&g.enabled).length,0)} 条保护词`;
-            const summary=hits.firstChild;hits.replaceChildren(summary,...result.hits.map(h=>node('div',{class:'wr-hit'},`${h.group} · ${h.from} → ${h.to===''?'删除':h.to} × ${h.count}`)),...(result.preserved??[]).map(p=>node('div',{class:'wr-hit wr-preserved'},`${p.group} · 保留“${p.text}”：${p.reason}`)));
-            if(!result.hits.length)hits.append(node('p',{},'当前输入保持原样。可在对应分类核对启停、匹配条件和保护内容。'));
+            inspector.update(input.value,result);
         };
         marked.addEventListener('mouseup',()=>{const selection=window.getSelection();if(selection?.anchorNode&&marked.contains(selection.anchorNode)){protection.value=selection.toString().trim();}});
         body.append(this.row(mode,this.btn('载入最近 AI 回复',()=>{
             const m=this.app.context().chat.findLast(m=>!m.is_user&&!m.is_system&&typeof m.mes==='string');if(!m)throw new Error('当前聊天暂无 AI 回复。');
             input.value=typeof m.extra?.display_text==='string'?m.extra.display_text:m.mes;this.testInput=input.value;draw();
-        })),state,this.label('处理前',input),this.label('匹配位置',marked),this.label('处理后',output),hits,
+        })),state,this.label('处理前',input),this.label('匹配位置',marked),this.label('处理后',output),inspector.element,
             node('section',{class:'wr-import-card'},node('h4',{},'将文字加入保护词'),protection,this.btn('加入全局保护并重新测试',()=>{
                 const text=protection.value.trim();if(!text)throw new Error('请填写需要保留的文字。');
                 let g=this.s.protectionGroups.find(g=>g.targets.includes('all'));if(!g){g={id:uid(),name:'全局保护',enabled:true,targets:['all'],terms:[]};this.s.protectionGroups.push(g);}
@@ -624,7 +661,7 @@ export class Manager{
         const section=(title,...children)=>node('section',{class:'wr-import-card'},node('h4',{},title),...children);
         const edited=this.check('编辑后生效',this.s.edited,v=>{this.s.edited=v;this.save();});edited.title='保存聊天消息的编辑后，重新应用替换规则。';
         body.append(node('h3',{},'设置'),section('处理哪些消息',this.row(this.check('AI 输出',this.s.assistant,v=>{this.s.assistant=v;this.save();}),this.check('自己的消息',this.s.user,v=>{this.s.user=v;this.save();}))),
-            section('生效方式',this.row(this.check('影响显示',this.s.display,v=>{this.s.display=v;this.save();}),this.check('影响模型输入',this.s.prompt,v=>{this.s.prompt=v;this.save();}),edited,this.check('保护代码块',this.s.protectCode,v=>{this.s.protectCode=v;this.save();}))),
+            section('生效方式',this.row(this.check('影响显示',this.s.display,v=>{this.s.display=v;this.save();}),this.check('影响模型输入',this.s.prompt,v=>{this.s.prompt=v;this.save();}),edited,this.check('保护《书名》',this.s.protectTitles,v=>{this.s.protectTitles=v;this.save();}),this.check('保护代码块',this.s.protectCode,v=>{this.s.protectCode=v;this.save();}))),
             section('数据与工具',this.row(this.btn('导入 / 导出',()=>this.showView('导入与导出')),this.btn('测试效果',()=>this.showView('测试效果')),
                 ...(this.app.beforeMigration?[this.btn('导出升级前配置',()=>download(`ST-WordReplacer-before-v4-${stamp()}.json`,this.app.beforeMigration))]:[]))));
     }

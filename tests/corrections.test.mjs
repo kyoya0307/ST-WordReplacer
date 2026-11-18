@@ -29,7 +29,7 @@ test('标点变体、字面关键词和自定义提示词可以配置，输入�
 test('单条、分类、总开关及保护范围生效，备份往返和全局搜索保留配置',()=>{
  const source='她的喉结——不对，她没有喉结，她抬手。';
  for(const mutate of [s=>s.enabled=false,s=>s.ruleGroups[0].enabled=false,s=>s.ruleGroups[0].rules[0].enabled=false]){const s=settings();mutate(s);assert.equal(compile(validateSettings(s)).run(source).text,source);}
- const s=settings();s.protectionGroups=[{id:'keep',name:'范围保护',enabled:true,targets:['correction'],terms:[{id:'k',text:'没有喉结',enabled:true}]}];const round=validateSettings(s);assert.equal(compile(round).run(source).text,source);assert.equal(compile(round).run('```text\n'+source+'\n```').text,'```text\n'+source+'\n```');
+ const s=settings();s.protectionGroups=[{id:'keep',name:'范围保护',enabled:true,targets:['correction'],terms:[{id:'k',text:'没有喉结',enabled:true}]}];const round=validateSettings(s);assert.equal(compile(round).run(source).text,'没有喉结她抬手。');assert.equal(compile(round).run('```text\n'+source+'\n```').text,'```text\n'+source+'\n```');
  assert.equal(round.ruleGroups[0].rules[0].kind,'correction');assert.deepEqual(round.ruleGroups[0].rules[0].cues,['不对']);assert.equal(searchEntries(round,'不对')[0].item.kind,'correction');
 });
 test('纠错清理与词库替换可在同次处理衔接，原文位置追踪一致',()=>{

@@ -6,6 +6,7 @@ import { upgradeStructure } from './model.js';
 import { compileConditions, protectionPattern, rangesFor } from './conditions.js';
 import {compileContextGroups} from './contextual.js';
 import {WORD_PAGE_SIZES,WORD_ORDERS} from './words-view.js';
+import {ExplanationTrace} from './explanation.js';
 
 export const uid = () => globalThis.crypto?.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const THEMES = Object.freeze({st:'跟随 ST',pink:'粉色',green:'绿色',beige:'米色',black:'黑色',white:'白色'});
@@ -65,7 +66,7 @@ function copyReplacement(target,source) {
 }
 export function createSettings() {
     return { version: 3, theme:'st', wordPageSize:15,wordOrder:'default',enabled: true, assistant: true, user: false, edited: true, display: true, prompt: true,
-        contextual: true, contextOptions:createContextOptions(), sentenceRules:[], protectCode: true, exceptions: [], groups:structuredClone(DEFAULT_GROUPS) };
+        contextual: true, contextOptions:createContextOptions(), sentenceRules:[], protectCode: true, protectTitles: false, exceptions: [], groups:structuredClone(DEFAULT_GROUPS) };
 }
 export function createBlankSettings(){
     return {...createSettings(),version:4,contextual:false,groups:[{id:uid(),name:'日常用词',enabled:false,rules:[]}],ruleGroups:[],protectionGroups:[]};
@@ -77,7 +78,7 @@ export function validateSettings(data) {
     base.theme=typeof data.theme==='string'&&Object.hasOwn(THEMES,data.theme)?data.theme:'st';
     base.wordPageSize=WORD_PAGE_SIZES.includes(data.wordPageSize)?data.wordPageSize:15;
     base.wordOrder=Object.hasOwn(WORD_ORDERS,data.wordOrder)?data.wordOrder:'default';
-    for (const key of ['enabled','assistant','user','edited','display','prompt','contextual','protectCode']) {
+    for (const key of ['enabled','assistant','user','edited','display','prompt','contextual','protectCode','protectTitles']) {
         if (typeof data[key] === 'boolean') base[key] = data[key];
     }
     // 旧版的 edited=false 是默认值；新版采用可随时关闭的推荐配置。
@@ -104,9 +105,10 @@ export function compile(settings) {
     const contextual=compileContext(settings.contextOptions);
     const conditions=compileConditions(settings);
     const contextGroups=compileContextGroups(settings);
-    const rules = new Map();
+    const rules = new Map(),wordSources=new Map();
     for (const group of settings.groups) if (group.enabled) for (const rule of group.rules) {
         if (!rule.enabled || !rule.from) continue;
+        const sources=wordSources.get(rule.from)??[];sources.push({...rule,group:group.name,groupId:group.id});wordSources.set(rule.from,sources);
         rules.set(rule.from, {...rule, group:group.name,groupId:group.id,deleteScope:rule.to===''?group.deleteScope:undefined});
     }
     const categoryRules=[];
@@ -124,24 +126,49 @@ export function compile(settings) {
         conflicts:inspectRules(settings).filter(x=>x.kind==='conflict').map(x=>x.from),
         run(input,{trace=false,explain=false}={}) {
             if (typeof input !== 'string' || !settings.enabled) return {text:input,hits:[]};
-            const tracking=trace?new TextTrace(input):null;
+            const tracking=trace?new TextTrace(input):null,diagnostics=explain?new ExplanationTrace(input):null;
+            const record=e=>diagnostics?.record(e);
+            if(diagnostics){
+                const seen=new Set();
+                for(const pattern of [guard,...settings.groups.filter(g=>g.enabled).map(g=>groupGuards.get(g.id)),...settings.ruleGroups?.filter(g=>g.enabled).map(g=>protectionPattern(settings,g.id))??[]])for(const p of rangesFor(pattern,input)){
+                    const key=JSON.stringify([p.start,p.end,p.ruleId,p.rule,p.groupId]);if(seen.has(key))continue;seen.add(key);
+                    record({...p,kind:'protect',text:input.slice(p.start,p.end),reason:p.reason,passive:true});
+                }
+            }
             const hitMap = new Map();
             const hit = (from,to,group) => {
                 const key = JSON.stringify([from,to,group]);
                 const old = hitMap.get(key);
                 if (old) old.count++; else hitMap.set(key,{from,to,group,count:1});
             };
-            const conditional=conditions(input,{explain}),preserved=conditional.preserved;
-            if(conditional.edits.length){tracking?.apply(conditional.edits);input=conditional.text;for(const h of conditional.hits)hit(h.from,h.to,h.group);}
+            let normalInput,normalCache;
+            const normalFor=text=>{if(text!==normalInput){normalInput=text;normalCache=contextGroups.normalRanges(text);}return normalCache;};
+            const conditional=conditions(input,{explain,normalRanges:normalFor(input)}),preserved=conditional.preserved;
+            for(const e of conditional.events??[])record(e);
+            if(conditional.edits.length){tracking?.apply(conditional.edits);diagnostics?.apply(conditional.edits);input=conditional.text;for(const h of conditional.hits)hit(h.from,h.to,h.group);}
             let deletions=[];
             if(settings.contextual||categoryRules.length){
                 const protectedRanges=guard?[...input.matchAll(new RegExp(guard.source,guard.flags))].map(m=>({start:m.index,end:m.index+m[0].length})):[];
                 const result=sentences(input,protectedRanges);input=result.text;deletions=result.deletions;
+                for(const span of deletions)record({...span,kind:'delete',text:span.text,to:'',sourceType:'condition',group:'旧版句段规则',rule:span.keywords.join(' / '),reason:'命中句段删除'});
+                diagnostics?.apply(deletions.map(span=>({...span,text:''})));
                 tracking?.apply(deletions.map(span=>({...span,text:''})));
                 for(const span of deletions)hit(span.text,'',`句段删除 · ${span.keywords.join(' / ')}`);
             }
             const process = str => {
-                const replace=tracking?(text,pattern,fn)=>tracking.replace(text,pattern,fn):(text,pattern,fn)=>text.replace(pattern,fn);
+                const replace=(text,pattern,fn)=>{
+                    if(!tracking&&!diagnostics)return text.replace(pattern,fn);
+                    const edits=[];
+                    const output=text.replace(pattern,(...args)=>{
+                        const value=fn(...args);
+                        if(value!==args[0]){
+                            const start=args[typeof args.at(-1)==='object'?args.length-3:args.length-2];
+                            edits.push({start,end:start+args[0].length,text:value});
+                        }
+                        return value;
+                    });
+                    tracking?.apply(edits);diagnostics?.apply(edits);return output;
+                };
                 const contextGuard=protectionPattern(settings,'context');
                 const replaceContext=(text,pattern,fn)=>{
                     const ranges=rangesFor(contextGuard,text);
@@ -151,26 +178,31 @@ export function compile(settings) {
                 if (settings.contextual) {
                     str = contextual.run(str,'before',(from,to,name)=>hit(from,to,`特殊句式 · ${name}`),null,replaceContext);
                 }
-                str=contextGroups(str,'before',replace,hit,preserved,explain);
+                str=contextGroups(str,'before',replace,hit,preserved,explain,record);
                 const scopedRanges=new Map([...groupGuards].map(([id,pattern])=>[id,rangesFor(pattern,str)]));
-                const globalRanges=rangesFor(guard,str);
+                const normalRanges=normalFor(str);
                 if (matcher) str = replace(str,matcher, (word,offset) => {
                     const rule = rules.get(word);
-                    if(globalRanges.some(r=>r.start<offset+word.length&&r.end>offset)||scopedRanges.get(rule.groupId)?.some(r=>r.start<offset+word.length&&r.end>offset)){
+                    const protectors=[...scopedRanges.get(rule.groupId)??[],...normalRanges.filter(p=>word.length>1&&p.text?.includes(word))].filter(r=>r.start<offset+word.length&&r.end>offset);
+                    const event={start:offset,end:offset+word.length,text:word,rule:word,ruleId:rule.id,group:rule.group,groupId:rule.groupId,sourceType:'dictionary'};
+                    for(const other of (wordSources.get(word)??[]).slice(0,-1))if(other.to!==rule.to)record({...event,ruleId:other.id,groupId:other.groupId,group:other.group,kind:'overridden',to:other.to,reason:'相同原词采用靠后的已启用分类',winner:{rule:word,ruleId:rule.id,group:rule.group,groupId:rule.groupId}});
+                    if(protectors.length){
+                        record({...event,kind:'protect',reason:'保护优先，本次词语替换保留',protectors:protectors.map(p=>({...p,text:str.slice(p.start,p.end)}))});
                         if(explain&&preserved.length<100)preserved.push({text:word,reason:'命中保护词或代码块',group:rule.group,rule:word});return word;
                     }
+                    record({...event,kind:rule.to===''?'delete':'replace',to:rule.to,reason:'命中词库；长词优先，同名原词按后置分类处理'});
                     hit(word,rule.to,rule.group);
                     return rule.to;
                 });
                 if (settings.contextual) {
                     str = contextual.run(str,'after',(from,to,name)=>hit(from,to,`特殊句式 · ${name}`),null,replaceContext);
                 }
-                str=contextGroups(str,'after',replace,hit,preserved,explain);
+                str=contextGroups(str,'after',replace,hit,preserved,explain,record);
                 return str;
             };
             const text=process(input);
             const allDeletions=[...conditional.deletions,...deletions];
-            return {text,hits:[...hitMap.values()],...(allDeletions.length?{deletions:allDeletions}:{}),...(tracking?{edits:tracking.edits(text)}:{}),...(explain?{preserved}:{})};
+            return {text,hits:[...hitMap.values()],...(allDeletions.length?{deletions:allDeletions}:{}),...(tracking?{edits:tracking.edits(text)}:{}),...(explain?{preserved,events:diagnostics.events,eventsTruncated:diagnostics.truncated}:{})};
         },
     };
 }

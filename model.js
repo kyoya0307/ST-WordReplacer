@@ -1,6 +1,6 @@
 // Shared structure for categories, migration and scoped protection.
 import { validateSentenceRules } from './sentences.js';
-import {CONTEXT_RULES} from './legacy.js';
+import {CONTEXT_RULES,contextKeep,validateContextKeep} from './legacy.js';
 import {validateFilters,compatibleFilters} from './filters.js';
 const id=()=>globalThis.crypto?.randomUUID?.()??`wr-${Date.now()}-${Math.random()}`;
 export const ACTIONS={word:'删除匹配文字',clause:'删除所在分句',sentence:'删除完整句子',replace:'替换为指定文字',context:'沿用语境处理',trimPrefix:'去掉固定开头，保留后文',correction:'保留修正后的正文'};
@@ -41,6 +41,7 @@ export function validateRule(r,index=0){
         if(!CONTEXT_RULES.some(t=>t.id===r.template))throw new Error('请选择语境模板。');
         if(!['context','replace','word'].includes(r.action)||r.inheritAction)throw new Error('语境模板可沿用原处理、替换或删除匹配片段。');
         out.template=r.template;out.safeContext=r.safeContext!==false;out.respectProtection=true;
+        if(r.contextKeep!==undefined)out.contextKeep=validateContextKeep(r.contextKeep);
     }else if(r.kind==='keywords'){
         const v=validateSentenceRules([{keywords:r.keywords,matchMode:r.matchMode??'any',scope:'clause'}])[0];
         Object.assign(out,{keywords:v.keywords,matchMode:v.matchMode});
@@ -107,6 +108,7 @@ export function upgradeStructure(base,data){
     if(base.contextual&&!base.ruleGroups.some(g=>g.rules.some(r=>r.kind==='context'))){
         base.ruleGroups.push(contextGroup(base.contextOptions));
     }
+    for(const g of base.ruleGroups)for(const r of g.rules)if(r.kind==='context')r.contextKeep??=contextKeep(base.contextOptions);
     base.contextual=false;
     // A v4 backup stores aggregate category state; inactive categories remain inactive on import.
     if(modern){
@@ -124,7 +126,7 @@ export function ruleSummary(r,g){
 }
 export function contextGroup(options){
     return {id:id(),name:'语境规则',enabled:true,defaultAction:'word',concealed:false,rules:CONTEXT_RULES.map(t=>{
-        const config=options.rules[t.id];return {id:id(),name:t.name,kind:'context',template:t.id,action:config.replacement===null?'context':'replace',...(config.replacement===null?{}:{to:config.replacement}),enabled:config.enabled,respectProtection:true,safeContext:true,inheritAction:false};
+        const config=options.rules[t.id];return {id:id(),name:t.name,kind:'context',template:t.id,action:config.replacement===null?'context':'replace',...(config.replacement===null?{}:{to:config.replacement}),enabled:config.enabled,respectProtection:true,safeContext:true,contextKeep:contextKeep(options),inheritAction:false};
     })};
 }
 export function literalConflicts(s){

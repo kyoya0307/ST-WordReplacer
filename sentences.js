@@ -1,4 +1,6 @@
 import {validateTemplateRule,templateSpans,preservePairedMarks} from './templates.js';
+import {clipDialogueSpans,literalAnchors,finishDialogueSpans} from './dialogue.js';
+import {subtractRanges} from './protection.js';
 export const SENTENCE_ENDS='。.!！?？；;…';
 export const SENTENCE_STARTS='，,：:'+SENTENCE_ENDS;
 export const SENTENCE_PRESETS={punctuation:'上一个标点之后 → 句末',sentence:'完整句子（逗号不分句）'};
@@ -32,13 +34,14 @@ function includeClosingMarks(text,start,end) {
 export function compileSentenceRules(rules,categoryRules=[]) {
     const enabled=[...validateSentenceRules(rules),...validateSentenceRules(categoryRules)].filter(r=>r.enabled),templates=enabled.filter(r=>r.keywords);
     const compiled=enabled.filter(r=>!r.keywords).map(r=>({...r,starts:new Set([...r.startChars,'\r','\n']),ends:new Set([...r.endChars,'\r','\n'])}));
-    return function(input,protectedRanges=[]) {
+    return function(input,protectedRanges=[],preserveWords=false) {
         let spans=templateSpans(input,templates,protectedRanges);
         for(const rule of compiled){
             let cursor=0;
             while(cursor<input.length){
                 const index=input.indexOf(rule.keyword,cursor);if(index<0)break;
                 cursor=index+rule.keyword.length;
+                if(preserveWords&&protectedRanges.some(p=>p.start<cursor&&p.end>index))continue;
                 let start=index,end=cursor;
                 while(start>0&&!rule.starts.has(input[start-1]))start--;
                 while(end<input.length&&!rule.ends.has(input[end]))end++;
@@ -47,11 +50,13 @@ export function compileSentenceRules(rules,categoryRules=[]) {
                 end=includeClosingMarks(input,start,end);
                 // 同一关键词在已覆盖句段中再次出现时，无需重复扫描至句末。
                 cursor=Math.max(cursor,end);
-                if(protectedRanges.some(r=>r.start<end&&r.end>start))continue;
+                if(!preserveWords&&protectedRanges.some(r=>r.start<end&&r.end>start))continue;
                 spans.push({start,end,keywords:[rule.keyword]});
             }
         }
-        if(templates.length)spans=preservePairedMarks(input,spans);
+        spans=clipDialogueSpans(input,spans,literalAnchors(input,spans));
+        if(preserveWords)spans=subtractRanges(spans,protectedRanges);
+        spans=preservePairedMarks(input,finishDialogueSpans(input,spans,protectedRanges));
         spans.sort((a,b)=>a.start-b.start||a.end-b.end);
         const merged=[];
         for(const span of spans){

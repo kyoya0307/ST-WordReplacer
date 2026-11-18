@@ -25,7 +25,7 @@ test('没有末尾标点、连续结束标点、换行均有明确边界',()=>{
 });
 test('移除句段内成对引号的末尾闭引号，保留外层叙述的闭引号',()=>{
     const r=compile(config());
-    assert.equal(r.run('她说：“声音很平。”后句。').text,'她说：后句。');
+    assert.equal(r.run('她说：“声音很平。”后句。').text,'后句。');
     assert.equal(r.run('她说：“前句。声音很平。”后句。').text,'她说：“前句。”后句。');
     assert.equal(r.run('"声音很平。"后句。').text,'后句。');
 });

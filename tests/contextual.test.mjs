@@ -4,8 +4,32 @@ import {createBlankSettings,createSettings,compile,validateSettings} from '../en
 import {contextGroup,validateRule,syncGroups,literalConflicts} from '../model.js';
 import {createContextOptions} from '../legacy.js';
 import {validateFilters} from '../filters.js';
+import {CONTEXT_GUIDES} from '../context-guide.js';
 const config=(filters={})=>({...createBlankSettings(),ruleGroups:[{id:'g',name:'条件示例',enabled:true,defaultAction:'word',rules:[{id:'r',name:'水果称呼',kind:'keywords',keywords:['苹果'],matchMode:'any',action:'replace',to:'水果',enabled:true,respectProtection:true,filters:validateFilters(filters)}]}]});
 const ctx=()=>({...createBlankSettings(),ruleGroups:[contextGroup(createContextOptions())]});
+
+test('说明中的修改示例与实际单条处理一致，正常用法在单条及组合执行时保留',()=>{
+    const expected={combination:'',direction:'去他的！',exclamation:'我劁！',kinship:'！',prefix:'真！',isolated:'！',number:'！'};
+    const all=compile(ctx());
+    for(const [id,guide] of Object.entries(CONTEXT_GUIDES)){
+        const s=ctx();s.ruleGroups[0].rules=s.ruleGroups[0].rules.filter(r=>r.template===id);const single=compile(s);
+        assert.equal(single.run(guide.change).text,expected[id],id);
+        for(const input of guide.normal){assert.equal(single.run(input).text,input,`${id} single: ${input}`);assert.equal(all.run(input).text,input,`${id} all: ${input}`);}
+    }
+});
+
+test('新增正常亲属表达保护限定对应规则，开关、用户替换、补充条件和字面替换保持独立',()=>{
+    for(const [id,input,old] of [['combination','去老婆娘家吃饭。','去家吃饭。'],['exclamation','操妈妈的心。','劁妈的心。'],['prefix','这些都是她妈送的。','这些都是送的。']]){
+        const s=ctx();s.ruleGroups[0].rules=s.ruleGroups[0].rules.filter(r=>r.template===id);const r=s.ruleGroups[0].rules[0];
+        assert.equal(compile(s).run(input).text,input);
+        r.safeContext=false;assert.equal(compile(s).run(input).text,old);
+        r.enabled=false;assert.equal(compile(s).run(input).text,input);
+    }
+    const s=ctx();s.ruleGroups[0].rules=s.ruleGroups[0].rules.filter(r=>r.template==='exclamation');const r=s.ruleGroups[0].rules[0];
+    r.action='replace';r.to='惊叹';assert.equal(compile(s).run('我操！').text,'惊叹！');assert.equal(compile(s).run('操妈妈的心。').text,'操妈妈的心。');
+    r.filters=validateFilters({excludes:['示例']});assert.equal(compile(s).run('示例：我操！').text,'示例：我操！');
+    s.groups=[{id:'w',name:'单字',enabled:true,rules:[{from:'妈',to:'亲',enabled:true}]}];assert.equal(compile(s).run('操妈妈的心。').text,'操亲亲的心。');
+});
 test('成对示例：前接、后接、前接保留、后接保留条件使用字面列表',()=>{
     const cases=[
         [{before:['红']},'红苹果，青苹果。','红水果，青苹果。'],
