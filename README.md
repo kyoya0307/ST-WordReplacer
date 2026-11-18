@@ -181,7 +181,3 @@ STWordReplacer.import(backup);
 ```
 
 开发环境使用 Node.js 20+，运行 `npm test`。扩展使用原生 ES 模块，安装时直接加载仓库文件。
-
-## 来源
-
-可选基础词库及内置语境规则的原作者为 **OwO**，来源：[原作发布页面](https://discord.com/channels/1379304008157499423/1470093202345300139)。
