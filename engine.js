@@ -5,6 +5,7 @@ import { TextTrace } from './trace.js';
 import { upgradeStructure } from './model.js';
 import { compileConditions, protectionPattern, rangesFor } from './conditions.js';
 import {compileContextGroups} from './contextual.js';
+import {WORD_PAGE_SIZES,WORD_ORDERS} from './words-view.js';
 
 export const uid = () => globalThis.crypto?.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const THEMES = Object.freeze({st:'跟随 ST',pink:'粉色',green:'绿色',beige:'米色',black:'黑色',white:'白色'});
@@ -63,7 +64,7 @@ function copyReplacement(target,source) {
     const data=replacementData(source);delete target.alternatives;delete target.multiple;Object.assign(target,data);
 }
 export function createSettings() {
-    return { version: 3, theme:'st', enabled: true, assistant: true, user: false, edited: true, display: true, prompt: true,
+    return { version: 3, theme:'st', wordPageSize:15,wordOrder:'default',enabled: true, assistant: true, user: false, edited: true, display: true, prompt: true,
         contextual: true, contextOptions:createContextOptions(), sentenceRules:[], protectCode: true, exceptions: [], groups:structuredClone(DEFAULT_GROUPS) };
 }
 export function createBlankSettings(){
@@ -74,6 +75,8 @@ export function validateSettings(data) {
     if (data.groups.length > 200) throw new Error('分类不能超过 200 个。');
     const base = createSettings();
     base.theme=typeof data.theme==='string'&&Object.hasOwn(THEMES,data.theme)?data.theme:'st';
+    base.wordPageSize=WORD_PAGE_SIZES.includes(data.wordPageSize)?data.wordPageSize:15;
+    base.wordOrder=Object.hasOwn(WORD_ORDERS,data.wordOrder)?data.wordOrder:'default';
     for (const key of ['enabled','assistant','user','edited','display','prompt','contextual','protectCode']) {
         if (typeof data[key] === 'boolean') base[key] = data[key];
     }
@@ -260,8 +263,8 @@ export function parseBatch(text) {
     const errors = [];
     text.split(/\r?\n/).forEach((line,index) => {
         if (!line.trim() || line.trimStart().startsWith('#')) return;
-        const sep = /\t|=>|→/.exec(line);
-        if (!sep) { errors.push(`第 ${index+1} 行缺少 →、=> 或制表符`); return; }
+        const sep = /\t|=>|->|→|=|＝/.exec(line);
+        if (!sep) { errors.push(`第 ${index+1} 行缺少 = 分隔符`); return; }
         const from = line.slice(0,sep.index).trim();
         const to = line.slice(sep.index+sep[0].length).trim();
         if (!from) errors.push(`第 ${index+1} 行原词为空`);

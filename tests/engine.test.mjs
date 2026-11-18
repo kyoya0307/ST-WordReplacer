@@ -67,6 +67,10 @@ test('批量支持三种分隔符、删除和注释',()=>{
     assert.throws(()=>parseBatch('正确→替换\n错误行'),/第 2 行/);
     assert.throws(()=>parseBatch('→替换'),/原词为空/);
 });
+test('批量支持半角全角等号和短横箭头，按首个分隔符解析并保留两侧内容',()=>{
+    const rows=parseBatch('单车=自行车\n标记=\n晚霞＝夕光\n甲->乙\na-b=c-d\n公式=x=y\n旧=>新\n网址=https://example.test/a-b?q=1');
+    assert.deepEqual(rows.map(r=>[r.from,r.to]),[['单车','自行车'],['标记',''],['晚霞','夕光'],['甲','乙'],['a-b','c-d'],['公式','x=y'],['旧','新'],['网址','https://example.test/a-b?q=1']]);
+});
 test('JSON 校验，拒绝脚本及非法空原词，不执行导入内容',()=>{
     assert.throws(()=>validateSettings({type:'script',content:'evil()'}));
     assert.throws(()=>validateSettings(custom([['','x']])));

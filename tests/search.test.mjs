@@ -33,3 +33,8 @@ test('搜索即时反映修改和启停，不改变规则、分类顺序或总�
     s.groups[0].rules[0].to='曙光';assert.equal(searchEntries(s,'曙光').length,1);
     s.enabled=false;assert.equal(searchEntries(s,'晨光').length,4);
 });
+
+test('语境规则搜索归入保护词，仍返回原始来源键和规则以便编辑启停',()=>{
+    const s=fixture(),g=s.ruleGroups[0],r={id:'ctx',name:'语境示例',kind:'context',template:'kinship',action:'context',enabled:false};g.rules.push(r);
+    const row=searchEntries(s,'语境示例')[0];assert.equal(row.type,'保护词');assert.equal(row.key,'ruleGroups');assert.equal(row.group,g);assert.equal(row.item,r);assert.equal(row.enabled,false);
+});

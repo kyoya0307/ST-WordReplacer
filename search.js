@@ -16,7 +16,7 @@ export function searchEntries(settings,query){
         for(const group of settings[key]??[])for(const item of group[itemKey]){
             const values=[group.name,...(key==='groups'?[item.from,item.to]:key==='ruleGroups'?ruleSearchText(item,group):[item.text])];
             if(values.some(value=>typeof value==='string'&&value.toLocaleLowerCase().includes(needle)))
-                result.push({key,type,group,item,enabled:!!(group.enabled&&item.enabled)});
+                result.push({key,type:key==='ruleGroups'&&item.kind==='context'?'保护词':type,group,item,enabled:!!(group.enabled&&item.enabled)});
         }
     }
     return result;

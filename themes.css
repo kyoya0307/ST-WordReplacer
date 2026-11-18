@@ -1,4 +1,4 @@
-/* 配色只作用于本扩展对话框。跟随 ST 时继续使用宿主输入框和按钮样式。 */
+/* 配色只作用于本扩展对话框，框体与输入区域使用更深的底色。 */
 #wr-manager {
     --wr-bg:var(--SmartThemeBlurTintColor,#20232b);
     --wr-fg:var(--SmartThemeBodyColor,#eee);
@@ -11,23 +11,23 @@
 }
 #wr-manager[data-theme="pink"] {
     color-scheme:light;--wr-bg:#e8dce1;--wr-fg:#49383f;--wr-muted:#705963;--wr-border:#b9a5af;
-    --wr-input:#f0e6ea;--wr-button:#dac5cf;--wr-accent:#795062;--wr-tint:#dfcdd5;--wr-warn:#80502e;--wr-error:#993b50;
+    --wr-input:color-mix(in srgb,var(--wr-bg) 90%,#000);--wr-button:color-mix(in srgb,var(--wr-bg) 92%,#000);--wr-accent:#795062;--wr-tint:#dfcdd5;--wr-warn:#80502e;--wr-error:#993b50;
 }
 #wr-manager[data-theme="green"] {
     color-scheme:light;--wr-bg:#dae4dc;--wr-fg:#2f4035;--wr-muted:#52665a;--wr-border:#a2b3a6;
-    --wr-input:#e4ece5;--wr-button:#c6d6ca;--wr-accent:#39624a;--wr-tint:#cddbcf;--wr-warn:#77532d;--wr-error:#963e49;
+    --wr-input:color-mix(in srgb,var(--wr-bg) 90%,#000);--wr-button:color-mix(in srgb,var(--wr-bg) 92%,#000);--wr-accent:#39624a;--wr-tint:#cddbcf;--wr-warn:#77532d;--wr-error:#963e49;
 }
 #wr-manager[data-theme="beige"] {
     color-scheme:light;--wr-bg:#e6ddcd;--wr-fg:#463f34;--wr-muted:#6c604e;--wr-border:#b6a98e;
-    --wr-input:#eee7da;--wr-button:#d8ccb6;--wr-accent:#6d5a3d;--wr-tint:#ded2bd;--wr-warn:#7b4b27;--wr-error:#953d43;
+    --wr-input:color-mix(in srgb,var(--wr-bg) 90%,#000);--wr-button:color-mix(in srgb,var(--wr-bg) 92%,#000);--wr-accent:#6d5a3d;--wr-tint:#ded2bd;--wr-warn:#7b4b27;--wr-error:#953d43;
 }
 #wr-manager[data-theme="black"] {
     color-scheme:dark;--wr-bg:#1b1e24;--wr-fg:#d0d5de;--wr-muted:#a5aebb;--wr-border:#515b69;
-    --wr-input:#242830;--wr-button:#303641;--wr-accent:#a0b2cd;--wr-tint:#2e3949;--wr-warn:#d9b27c;--wr-error:#dda0a7;
+    --wr-input:color-mix(in srgb,var(--wr-bg) 90%,#000);--wr-button:color-mix(in srgb,var(--wr-bg) 92%,#000);--wr-accent:#a0b2cd;--wr-tint:#2e3949;--wr-warn:#d9b27c;--wr-error:#dda0a7;
 }
 #wr-manager[data-theme="white"] {
     color-scheme:light;--wr-bg:#e4e5e7;--wr-fg:#343b45;--wr-muted:#59616c;--wr-border:#adb3bc;
-    --wr-input:#eeeeef;--wr-button:#d4d7dc;--wr-accent:#4b617c;--wr-tint:#d7dfe8;--wr-warn:#80572d;--wr-error:#973f4a;
+    --wr-input:color-mix(in srgb,var(--wr-bg) 90%,#000);--wr-button:color-mix(in srgb,var(--wr-bg) 92%,#000);--wr-accent:#4b617c;--wr-tint:#d7dfe8;--wr-warn:#80572d;--wr-error:#973f4a;
 }
 #wr-manager:not([data-theme="st"]) {--SmartThemeBodyColor:var(--wr-fg);--SmartThemeQuoteColor:var(--wr-accent);--SmartThemeBorderColor:var(--wr-border);--SmartThemeBlurTintColor:var(--wr-bg);text-shadow:none}
 #wr-manager:not([data-theme="st"]) * {text-shadow:none}

@@ -2,6 +2,7 @@ import { preservePairedMarks, sentenceUnits } from './templates.js';
 import { compileSentenceRules } from './sentences.js';
 import { protectionTerms } from './model.js';
 import {filterReason,keywordMatches,expandMatches} from './filters.js';
+import {triggerTitle} from './presets.js';
 const escape=s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 export function protectionPattern(s,target='all'){
     const parts=protectionTerms(s,target).filter(Boolean).sort((a,b)=>b.length-a.length).map(escape);
@@ -27,17 +28,17 @@ export function compileConditions(s){
             else{
                 matches=pattern?[...input.matchAll(new RegExp(pattern.source,pattern.flags))].map(m=>({start:m.index,end:m.index+m[0].length})):keywordMatches(input,r);
                 matches=matches.filter(hit=>{
-                    const reason=filterReason(input,hit,r.filters);if(reason&&explain&&preserved.length<100)preserved.push({text:input.slice(hit.start,hit.end),reason,group:g.name,rule:r.name||'清理规则'});return !reason;
+                    const reason=filterReason(input,hit,r.filters);if(reason&&explain&&preserved.length<100)preserved.push({text:input.slice(hit.start,hit.end),reason,group:g.name,rule:triggerTitle(r)});return !reason;
                 });
                 if(['clause','sentence'].includes(action))spans=expandMatches(input,matches,action);
                 else spans=matches.flatMap(m=>m.members??[m]);
             }
             spans=spans.filter(span=>{
                 const blocked=protectedRanges.some(p=>overlaps(span,p)),reason=filterReason(input,span,r.kind==='boundary'?r.filters:undefined);
-                if((blocked||reason)&&explain&&preserved.length<100)preserved.push({text:input.slice(span.start,span.end),reason:reason||'命中保护词或代码块',group:g.name,rule:r.name||'清理规则'});
+                if((blocked||reason)&&explain&&preserved.length<100)preserved.push({text:input.slice(span.start,span.end),reason:reason||'命中保护词或代码块',group:g.name,rule:triggerTitle(r)});
                 return !blocked&&!reason;
             });
-            candidates.push(...spans.map(span=>({...span,text:action==='replace'?r.to:'',clauseRange:r.kind!=='boundary'&&['clause','sentence'].includes(action),priority,source:`条件规则 · ${g.name}`,rule:r.name||'清理规则',keywords:r.keywords??[r.kind==='boundary'?r.keyword:r.kind==='pattern'?`${r.prefix}…${r.suffix}`:r.start]})));
+            candidates.push(...spans.map(span=>({...span,text:action==='replace'?r.to:'',clauseRange:r.kind!=='boundary'&&['clause','sentence'].includes(action),priority,source:`条件规则 · ${g.name}`,rule:triggerTitle(r),keywords:r.keywords??[r.kind==='boundary'?r.keyword:r.kind==='pattern'?`${r.prefix}…${r.suffix}`:r.start]})));
         }
         // Deletion ranges form a union; replacements use the longest match then category order.
         const deletions=candidates.filter(e=>e.text==='').sort((a,b)=>a.start-b.start||a.end-b.end),merged=[];
