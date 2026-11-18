@@ -4,6 +4,7 @@ export const TRIGGER_PRESETS={
     keywords:{title:'关键词删句',kind:'keywords',action:'clause',matchMode:'any',description:'任意一个词或完整短语出现时，删除所在分句。',example:'【待删】 → 删除包含它的逗号分句'},
     together:{title:'共同出现删句',kind:'keywords',action:'clause',matchMode:'all',description:'同一句包含全部关键词时，删除它们所在的连续分句。',example:'声音 ＋ 平 → 同句共同出现时处理'},
     pattern:{title:'固定结构清理',kind:'pattern',action:'word',description:'按固定开头、中间字数和固定结尾匹配，删除匹配文字。',example:'极 ＋ 1 个汉字 ＋ 的 → 极轻的、极重的'},
+    trimPrefix:{title:'去掉固定开头',kind:'pattern',action:'trimPrefix',extra:true,description:'匹配固定结构后，去掉开头并保留其余文字。',example:'极 ＋ 1 个汉字 ＋ 的 → 极轻的变为轻的'},
     markers:{title:'标记内容清理',kind:'markers',action:'word',description:'删除一对起止标记及其包裹的内容，支持跨行。',example:'[示例开始] … [示例结束] → 删除这一段'},
     context:{title:'保护语境规则',kind:'context',action:'context',description:'使用既有语境模板识别特定表达，并按保留条件保护正常叙述。',example:'查看每个模板的触发内容、保留条件和试用效果'},
     sentence:{title:'完整句子删除',kind:'keywords',action:'sentence',matchMode:'any',extra:true,description:'任意一个词或短语出现时，删除从句首到句末的完整句子。',example:'【待删】 → 删除包含它的完整句子'},
@@ -19,6 +20,7 @@ export function triggerPreset(rule,group){
         return {clause:'keywords',sentence:'sentence',word:'text'}[action]??'custom';
     }
     if(rule.kind==='pattern'&&action==='word')return 'pattern';
+    if(rule.kind==='pattern'&&action==='trimPrefix')return 'trimPrefix';
     if(rule.kind==='markers'&&action==='word')return 'markers';
     return 'custom';
 }

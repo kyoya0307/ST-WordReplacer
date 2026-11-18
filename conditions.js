@@ -38,7 +38,7 @@ export function compileConditions(s){
                 if((blocked||reason)&&explain&&preserved.length<100)preserved.push({text:input.slice(span.start,span.end),reason:reason||'命中保护词或代码块',group:g.name,rule:triggerTitle(r)});
                 return !blocked&&!reason;
             });
-            candidates.push(...spans.map(span=>({...span,text:action==='replace'?r.to:'',clauseRange:r.kind!=='boundary'&&['clause','sentence'].includes(action),priority,source:`条件规则 · ${g.name}`,rule:triggerTitle(r),keywords:r.keywords??[r.kind==='boundary'?r.keyword:r.kind==='pattern'?`${r.prefix}…${r.suffix}`:r.start]})));
+            candidates.push(...spans.map(span=>({...span,text:action==='replace'?r.to:action==='trimPrefix'?input.slice(span.start+r.prefix.length,span.end):'',clauseRange:r.kind!=='boundary'&&['clause','sentence'].includes(action),priority,source:`条件规则 · ${g.name}`,rule:triggerTitle(r),keywords:r.keywords??[r.kind==='boundary'?r.keyword:r.kind==='pattern'?`${r.prefix}…${r.suffix}`:r.start]})));
         }
         // Deletion ranges form a union; replacements use the longest match then category order.
         const deletions=candidates.filter(e=>e.text==='').sort((a,b)=>a.start-b.start||a.end-b.end),merged=[];

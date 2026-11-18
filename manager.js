@@ -346,6 +346,8 @@ export class Manager{
         if(r.filters){
             for(const [key,label]of Object.entries(FILTER_FIELDS))if(r.filters[key]?.length)content.append(node('small',{},`${label}${['contains','excludes'].includes(key)?`（${r.filters.scope==='clause'?'同分句':'同一句'}）`:''}`),chips(r.filters[key]));
             if(r.filters.boundary!=='any')content.append(node('small',{},`文字边界：${BOUNDARIES[r.filters.boundary]}`));
+            if(r.filters.maxClauses)content.append(node('small',{},`最多涉及 ${r.filters.maxClauses} 个相邻分句`));
+            if(r.filters.ordered)content.append(node('small',{},'按关键词填写顺序匹配'));
             if(r.filters.distance)content.append(node('small',{},`关键词最多相隔 ${r.filters.distance} 字`));
         }
         return content;
@@ -416,7 +418,7 @@ export class Manager{
                 node('details',{},node('summary',{},'查看模板的匹配内容'),node('p',{},CONTEXT_MATCH_TEXT[r.template])),
                 this.btn('载入保留示例',()=>{draft.sample=review.sample;sample.value=draft.sample;preview();}));
         }
-        const options={word:ACTIONS.word,clause:ACTIONS.clause,sentence:ACTIONS.sentence,replace:ACTIONS.replace};if(r.matchMode==='all')delete options.replace;if(r.kind==='boundary'){delete options.word;delete options.replace;}
+        const options={word:ACTIONS.word,clause:ACTIONS.clause,sentence:ACTIONS.sentence,replace:ACTIONS.replace};if(r.kind==='pattern')options.trimPrefix=ACTIONS.trimPrefix;if(r.matchMode==='all')delete options.replace;if(r.kind==='boundary'){delete options.word;delete options.replace;}
         if(fixed)form.append(node('div',{class:'wr-fixed-action'},node('small',{},'模板处理方式'),node('b',{},ACTIONS[r.action])));
         else form.append(this.label('处理方式',this.select(r.inheritAction?'inherit':r.action,'处理范围',r.kind==='context'?{context:ACTIONS.context,word:ACTIONS.word,replace:ACTIONS.replace}:r.kind==='boundary'?{clause:'按指定边界删除'}:{inherit:`沿用分类：${ACTIONS[g.defaultAction]}`,...options},v=>{r.inheritAction=v==='inherit';if(!r.inheritAction)r.action=v;this.render();})));
         if(!r.inheritAction&&r.action==='replace')form.append(this.label('替换为',this.area(r.to??'','替换文字',v=>update('to',v),3)));
@@ -440,6 +442,9 @@ export class Manager{
         box.append(this.label('文字边界',boundary,'例：“草稿。”满足独立边界；“草稿纸”与其他汉字相连。'),
             this.label('伴随词与保留词的判断范围',this.select(filters.scope,'条件判断范围',{sentence:'同一句',clause:'同一个逗号分句'},v=>{filters.scope=v;preview();}),'句号、问号等划分整句，逗号划分分句。'));
         if(r.kind==='keywords'&&r.matchMode==='all')box.append(this.label('关键词之间最多相隔多少字',node('input',{type:'number',min:0,max:2000,value:filters.distance,class:'text_pole','aria-label':'关键词最大间隔',oninput:this.safe(e=>{filters.distance=Number(e.target.value);preview();})}),'0 表示不限；例如设为 10 时，靠近的关键词可共同触发。'));
+        if(r.kind==='keywords'&&r.matchMode==='all')box.append(
+            this.label('最多涉及几个分句',node('input',{type:'number',min:0,max:50,value:filters.maxClauses??0,class:'text_pole','aria-label':'最多涉及几个分句',oninput:this.safe(e=>{filters.maxClauses=Number(e.target.value);preview();})}),'0 表示不限；设为 2 时，关键词最多位于相邻两个逗号分句。'),
+            this.check('按关键词填写顺序匹配',filters.ordered??false,v=>{filters.ordered=v;preview();}));
         const picker=this.select('before','添加哪种条件',FILTER_FIELDS,()=>{}),list=node('div',{class:'wr-filter-list'});
         const draw=()=>{
             list.replaceChildren();for(const key of chosen){

@@ -3,7 +3,7 @@ import { validateSentenceRules } from './sentences.js';
 import {CONTEXT_RULES} from './legacy.js';
 import {validateFilters,compatibleFilters} from './filters.js';
 const id=()=>globalThis.crypto?.randomUUID?.()??`wr-${Date.now()}-${Math.random()}`;
-export const ACTIONS={word:'删除匹配文字',clause:'删除所在分句',sentence:'删除完整句子',replace:'替换为指定文字',context:'沿用语境处理'};
+export const ACTIONS={word:'删除匹配文字',clause:'删除所在分句',sentence:'删除完整句子',replace:'替换为指定文字',context:'沿用语境处理',trimPrefix:'去掉固定开头，保留后文'};
 export const KINDS={keywords:'关键词',pattern:'固定结构',markers:'起止标记',boundary:'自定义边界',context:'语境模板'};
 export function groupState(g,key='rules'){
     const rows=g[key]??[],active=rows.filter(r=>r.enabled!==false).length;
@@ -28,6 +28,7 @@ export function validateRule(r,index=0){
     if(!Object.hasOwn(ACTIONS,r.action))throw new Error('请选择处理范围。');
     const out={id:id(),name:text(r.name??'','规则名称',100,true),kind:r.kind,action:r.action,enabled:r.enabled!==false,respectProtection:r.respectProtection!==false,inheritAction:r.inheritAction===true};
     if(r.filters!==undefined)out.filters=validateFilters(r.filters);
+    if(r.action==='trimPrefix'&&r.kind!=='pattern')throw new Error('去掉固定开头用于固定结构模板。');
     if(r.kind!=='context'&&r.action==='context')throw new Error('语境处理用于语境模板。');
     if(r.kind==='context'){
         if(!CONTEXT_RULES.some(t=>t.id===r.template))throw new Error('请选择语境模板。');
@@ -111,7 +112,7 @@ export function upgradeStructure(base,data){
 export function ruleSummary(r,g){
     const action=r.inheritAction?g.defaultAction:r.action;
     const condition=r.kind==='context'?CONTEXT_RULES.find(t=>t.id===r.template)?.name:r.kind==='keywords'?(r.matchMode==='all'?`${r.filters?.scope==='clause'?'同分句':'同一句'}包含全部关键词`:'出现任意关键词'):r.kind==='pattern'?`${r.prefix}＋${r.min===r.max?r.min:`${r.min}～${r.max}`} 个汉字＋${r.suffix}`:r.kind==='markers'?`${r.start} … ${r.end}`:'按指定起止标点匹配';
-    const count=r.filters?Object.values(r.filters).filter(v=>Array.isArray(v)&&v.length).length+(r.filters.boundary!=='any'?1:0):0;
+    const count=r.filters?Object.values(r.filters).filter(v=>Array.isArray(v)&&v.length).length+(r.filters.boundary!=='any'?1:0)+(r.filters.maxClauses?1:0)+(r.filters.ordered?1:0):0;
     return `${condition} → ${ACTIONS[action]}${count?` · ${count} 项补充条件`:''}`;
 }
 export function contextGroup(options){

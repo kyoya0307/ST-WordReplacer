@@ -15,6 +15,9 @@ export function validateFilters(value){
     const out={scope:value.scope??'sentence',boundary:value.boundary??'any',distance:value.distance??0};
     if(!['clause','sentence'].includes(out.scope)||!Object.hasOwn(BOUNDARIES,out.boundary))throw new Error('请选择条件的判断范围与文字边界。');
     if(!Number.isInteger(out.distance)||out.distance<0||out.distance>2000)throw new Error('关键词间隔范围为 0～2000 字；0 表示不限。');
+    if(value.maxClauses!==undefined){if(!Number.isInteger(value.maxClauses)||value.maxClauses<0||value.maxClauses>50)throw new Error('涉及分句数范围为 0～50；0 表示不限。');if(value.maxClauses)out.maxClauses=value.maxClauses;}
+    if(value.ordered!==undefined&&typeof value.ordered!=='boolean')throw new Error('关键词顺序条件应为开关。');
+    if(value.ordered)out.ordered=true;
     for(const key of Object.keys(FILTER_FIELDS)){
         const rows=value[key]??[];
         if(!Array.isArray(rows)||rows.length>500||rows.some(x=>typeof x!=='string'||!x.trim()||x.length>2000||/[\r\n]/.test(x)))throw new Error(`${FILTER_FIELDS[key]}：每行一项，每项 1～2000 字，最多 500 项。`);
@@ -41,6 +44,15 @@ export function filterReason(input,hit,filters){
     if(filters.exceptAfter?.some(s=>after.startsWith(s)))return '命中后接保留条件';
     if(filters.contains?.length&&!filters.contains.every(s=>part.includes(s)))return '范围内的伴随词尚未齐全';
     if(filters.excludes?.some(s=>part.includes(s)))return '命中范围内保留词';
+    if(filters.maxClauses&&hit.members?.length>1){
+        const unit=sentenceUnits(input).find(u=>u.start<=hit.start&&u.contentEnd>=hit.end);
+        const count=unit?.clauses.filter(c=>c.end>hit.start&&c.start<hit.end).length;
+        if(!count||count>filters.maxClauses)return '涉及分句数超过设定范围';
+    }
+    if(filters.ordered&&hit.members?.length>1){
+        const keys=[...new Set([...hit.members].sort((a,b)=>a.start-b.start).map(m=>m.key))];
+        if(keys.some((key,i)=>key!==i))return '关键词出现顺序与填写顺序不同';
+    }
     if(filters.distance&&hit.members?.length>1){
         let cursor=hit.start,chars=0;
         for(const member of [...hit.members].sort((a,b)=>a.start-b.start)){if(member.start>cursor)chars+=Array.from(input.slice(cursor,member.start)).length;cursor=Math.max(cursor,member.end);}
@@ -57,7 +69,7 @@ export function keywordMatches(input,r){
             hits.sort((a,b)=>a.start-b.start||b.end-a.end);
             if(r.matchMode==='all'){
                 if(new Set(hits.map(h=>h.key)).size!==r.keywords.length)continue;
-                if(r.filters?.distance){
+                if(r.filters?.distance||r.filters?.maxClauses||r.filters?.ordered){
                     for(let i=0;i<hits.length;i++){const members=[];for(let j=i;j<hits.length;j++){members.push(hits[j]);if(new Set(members.map(h=>h.key)).size===r.keywords.length){groups.push({start:hits[i].start,end:Math.max(...members.map(h=>h.end)),members:[...members]});break;}}}
                 }else groups.push({start:hits[0].start,end:Math.max(...hits.map(h=>h.end)),members:hits});
             }else groups.push(...hits.map(h=>({...h,members:[h]})));
