@@ -3,8 +3,8 @@ import { validateSentenceRules } from './sentences.js';
 import {CONTEXT_RULES} from './legacy.js';
 import {validateFilters,compatibleFilters} from './filters.js';
 const id=()=>globalThis.crypto?.randomUUID?.()??`wr-${Date.now()}-${Math.random()}`;
-export const ACTIONS={word:'删除匹配文字',clause:'删除所在分句',sentence:'删除完整句子',replace:'替换为指定文字',context:'沿用语境处理',trimPrefix:'去掉固定开头，保留后文'};
-export const KINDS={keywords:'关键词',pattern:'固定结构',markers:'起止标记',boundary:'自定义边界',context:'语境模板'};
+export const ACTIONS={word:'删除匹配文字',clause:'删除所在分句',sentence:'删除完整句子',replace:'替换为指定文字',context:'沿用语境处理',trimPrefix:'去掉固定开头，保留后文',correction:'保留修正后的正文'};
+export const KINDS={keywords:'关键词',pattern:'固定结构',markers:'起止标记',boundary:'自定义边界',context:'语境模板',correction:'自我纠错'};
 export function groupState(g,key='rules'){
     const rows=g[key]??[],active=rows.filter(r=>r.enabled!==false).length;
     return {active,total:rows.length,checked:active>0&&active===rows.length,mixed:active>0&&active<rows.length,label:active===0?'已停用':active===rows.length?`已启用 · ${active}/${rows.length}`:`部分启用 · ${active}/${rows.length}`};
@@ -30,7 +30,14 @@ export function validateRule(r,index=0){
     if(r.filters!==undefined)out.filters=validateFilters(r.filters);
     if(r.action==='trimPrefix'&&r.kind!=='pattern')throw new Error('去掉固定开头用于固定结构模板。');
     if(r.kind!=='context'&&r.action==='context')throw new Error('语境处理用于语境模板。');
-    if(r.kind==='context'){
+    if(r.action==='correction'&&r.kind!=='correction')throw new Error('纠错清理用于自我纠错模板。');
+    if(r.kind==='correction'){
+        if(r.action!=='correction'||r.inheritAction)throw new Error('自我纠错模板采用固定的正文保留方式。');
+        out.keywords=validateSentenceRules([{keywords:r.keywords,matchMode:'any',scope:'clause'}])[0].keywords;
+        const cues=r.cues??['不对'];
+        if(!Array.isArray(cues)||!cues.length||cues.length>50||cues.some(s=>typeof s!=='string'||!s.trim()||s.length>30||/[\r\n]/.test(s)))throw new Error('纠错提示词每行一项，最多 50 项，每项 1～30 字。');
+        out.cues=[...new Set(cues)];
+    }else if(r.kind==='context'){
         if(!CONTEXT_RULES.some(t=>t.id===r.template))throw new Error('请选择语境模板。');
         if(!['context','replace','word'].includes(r.action)||r.inheritAction)throw new Error('语境模板可沿用原处理、替换或删除匹配片段。');
         out.template=r.template;out.safeContext=r.safeContext!==false;out.respectProtection=true;
@@ -111,7 +118,7 @@ export function upgradeStructure(base,data){
 }
 export function ruleSummary(r,g){
     const action=r.inheritAction?g.defaultAction:r.action;
-    const condition=r.kind==='context'?CONTEXT_RULES.find(t=>t.id===r.template)?.name:r.kind==='keywords'?(r.matchMode==='all'?`${r.filters?.scope==='clause'?'同分句':'同一句'}包含全部关键词`:'出现任意关键词'):r.kind==='pattern'?`${r.prefix}＋${r.min===r.max?r.min:`${r.min}～${r.max}`} 个汉字＋${r.suffix}`:r.kind==='markers'?`${r.start} … ${r.end}`:'按指定起止标点匹配';
+    const condition=r.kind==='context'?CONTEXT_RULES.find(t=>t.id===r.template)?.name:r.kind==='correction'?'关键词后出现破折号与纠错提示词':r.kind==='keywords'?(r.matchMode==='all'?`${r.filters?.scope==='clause'?'同分句':'同一句'}包含全部关键词`:'出现任意关键词'):r.kind==='pattern'?`${r.prefix}＋${r.min===r.max?r.min:`${r.min}～${r.max}`} 个汉字＋${r.suffix}`:r.kind==='markers'?`${r.start} … ${r.end}`:'按指定起止标点匹配';
     const count=r.filters?Object.values(r.filters).filter(v=>Array.isArray(v)&&v.length).length+(r.filters.boundary!=='any'?1:0)+(r.filters.maxClauses?1:0)+(r.filters.ordered?1:0):0;
     return `${condition} → ${ACTIONS[action]}${count?` · ${count} 项补充条件`:''}`;
 }

@@ -3,7 +3,7 @@ import {CONTEXT_MATCH_TEXT} from './legacy.js';
 import {FILTER_FIELDS} from './filters.js';
 
 export function ruleSearchText(rule,group){
-    return [rule.name,ruleSummary(rule,group),...(rule.keywords??[]),rule.keyword,rule.prefix,rule.suffix,
+    return [rule.name,ruleSummary(rule,group),...(rule.keywords??[]),...(rule.cues??[]),rule.keyword,rule.prefix,rule.suffix,
         rule.start,rule.end,rule.startChars,rule.endChars,rule.to,
         rule.kind==='context'?CONTEXT_MATCH_TEXT[rule.template]:'',
         ...Object.keys(FILTER_FIELDS).flatMap(key=>rule.filters?.[key]??[])];

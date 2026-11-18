@@ -2,6 +2,7 @@ import { preservePairedMarks, sentenceUnits } from './templates.js';
 import { compileSentenceRules } from './sentences.js';
 import { protectionTerms } from './model.js';
 import {filterReason,keywordMatches,expandMatches} from './filters.js';
+import {correctionSpans} from './corrections.js';
 import {triggerTitle} from './presets.js';
 const escape=s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 export function protectionPattern(s,target='all'){
@@ -26,7 +27,7 @@ export function compileConditions(s){
             let spans=[],matches=[];
             if(r.kind==='boundary')spans=compileSentenceRules([{keyword:r.keyword,startChars:r.startChars,endChars:r.endChars,enabled:true}])(input,protectedRanges).deletions;
             else{
-                matches=pattern?[...input.matchAll(new RegExp(pattern.source,pattern.flags))].map(m=>({start:m.index,end:m.index+m[0].length})):keywordMatches(input,r);
+                matches=r.kind==='correction'?correctionSpans(input,r):pattern?[...input.matchAll(new RegExp(pattern.source,pattern.flags))].map(m=>({start:m.index,end:m.index+m[0].length})):keywordMatches(input,r);
                 matches=matches.filter(hit=>{
                     const reason=filterReason(input,hit,r.filters);if(reason&&explain&&preserved.length<100)preserved.push({text:input.slice(hit.start,hit.end),reason,group:g.name,rule:triggerTitle(r)});return !reason;
                 });
@@ -38,7 +39,7 @@ export function compileConditions(s){
                 if((blocked||reason)&&explain&&preserved.length<100)preserved.push({text:input.slice(span.start,span.end),reason:reason||'命中保护词或代码块',group:g.name,rule:triggerTitle(r)});
                 return !blocked&&!reason;
             });
-            candidates.push(...spans.map(span=>({...span,text:action==='replace'?r.to:action==='trimPrefix'?input.slice(span.start+r.prefix.length,span.end):'',clauseRange:r.kind!=='boundary'&&['clause','sentence'].includes(action),priority,source:`条件规则 · ${g.name}`,rule:triggerTitle(r),keywords:r.keywords??[r.kind==='boundary'?r.keyword:r.kind==='pattern'?`${r.prefix}…${r.suffix}`:r.start]})));
+            candidates.push(...spans.map(span=>({...span,text:action==='replace'?r.to:action==='trimPrefix'?input.slice(span.start+r.prefix.length,span.end):'',clauseRange:r.kind==='correction'||(r.kind!=='boundary'&&['clause','sentence'].includes(action)),priority,source:`条件规则 · ${g.name}`,rule:triggerTitle(r),keywords:r.keywords??[r.kind==='boundary'?r.keyword:r.kind==='pattern'?`${r.prefix}…${r.suffix}`:r.start]})));
         }
         // Deletion ranges form a union; replacements use the longest match then category order.
         const deletions=candidates.filter(e=>e.text==='').sort((a,b)=>a.start-b.start||a.end-b.end),merged=[];

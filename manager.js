@@ -328,15 +328,16 @@ export class Manager{
     }
     startRule(g,kind='keywords',r=null,presetId=null){
         if(kind==='context'){this.tab='保护词';this.protectionMode='rules';}
-        const chosen=presetId??(r?triggerPreset(r,g):{keywords:'keywords',pattern:'pattern',markers:'markers',context:'context'}[kind]??'custom');
+        const chosen=presetId??(r?triggerPreset(r,g):{keywords:'keywords',pattern:'pattern',markers:'markers',context:'context',correction:'correction'}[kind]??'custom');
         const initial=chosen==='custom'?{id:uid(),name:'',enabled:true,kind,action:'clause',respectProtection:true}:presetDraft(chosen);
         const data=structuredClone(r??initial);if(r&&chosen!=='custom'){data.action=effectiveAction(r,g);data.inheritAction=false;}
         this.conditionPreset=chosen;
-        this.draft={groupId:g.id,group:g,presetId:chosen,originalId:r?.id,data,sample:chosen==='together'?'她点头，声音传来，语调平静。她坐下。':kind==='context'?CONTEXT_REVIEWS[r?.template??'kinship'].sample:kind==='pattern'?'响起极轻的脚步声，随后传来极重的撞击声。':kind==='markers'?'正文。[示例开始]这段是示例内容。[示例结束]继续正文。':'她点头，【待删】这句是示例。她坐下。'};
+        this.draft={groupId:g.id,group:g,presetId:chosen,originalId:r?.id,data,sample:kind==='correction'?`她的${data.keywords[0]??'翅膀'}——不对，她没有${data.keywords[0]??'翅膀'}，她的手臂伸向窗外。`:chosen==='together'?'她点头，声音传来，语调平静。她坐下。':kind==='context'?CONTEXT_REVIEWS[r?.template??'kinship'].sample:kind==='pattern'?'响起极轻的脚步声，随后传来极重的撞击声。':kind==='markers'?'正文。[示例开始]这段是示例内容。[示例结束]继续正文。':'她点头，【待删】这句是示例。她坐下。'};
         this.render();this.pane.querySelector('.wr-rule-editor')?.scrollIntoView?.({block:'nearest'});
     }
     ruleContent(r){
         const content=node('div',{class:'wr-rule-content'}),chips=values=>node('div',{class:'wr-keyword-chips'},...values.map(v=>node('span',{},v)));
+        if(r.kind==='correction')content.append(node('small',{},'需要避开的词'),chips(r.keywords),node('small',{},'破折号后的纠错提示词'),chips(r.cues));
         if(r.kind==='keywords')content.append(node('small',{},r.matchMode==='all'?'共同触发词':'触发词'),chips(r.keywords));
         if(r.kind==='pattern')content.append(node('small',{},'触发结构'),chips([r.prefix,`${r.min===r.max?r.min:`${r.min}～${r.max}`} 个汉字`,r.suffix]));
         if(r.kind==='markers')content.append(node('small',{},'开始标记 → 结束标记'),chips([r.start,r.end]));
@@ -405,6 +406,10 @@ export class Manager{
             form.append(this.label(r.matchMode==='all'?'共同触发词':'触发词或短语',this.area(r.keywords.join('\n'),'每行一个关键词',v=>update('keywords',v.split(/\r?\n/).map(s=>s.trim()).filter(Boolean))),r.matchMode==='all'?'例如分别填写“声音”和“平”，同一句共同出现时触发。':'每行一项，例如【待删】；完整短语也可以作为一项填写。'));
             if(!fixed)form.append(this.label('触发方式',this.select(r.matchMode,'触发方式',{any:'出现任意一个词',all:'同一句出现全部词，顺序任意'},v=>{r.matchMode=v;if(v==='all'&&r.action==='replace')r.action='clause';this.render();})));
         }
+        if(r.kind==='correction')form.append(
+            this.label('需要避开的词',this.area(r.keywords.join('\n'),'需要避开的词（每行一个）',v=>update('keywords',v.split(/\r?\n/).map(s=>s.trim()).filter(Boolean))), '每行一词，任意一项出现在误写分句中即可触发。'),
+            node('details',{class:'wr-advanced'},node('summary',{},'纠错提示词'),this.area(r.cues.join('\n'),'纠错提示词（每行一个）',v=>update('cues',v.split(/\r?\n/).map(s=>s.trim()).filter(Boolean)),3)),
+            node('small',{},'从误写分句开始，清理破折号、纠错提示词及重复解释该词的分句，保留后续正文。'));
         if(r.kind==='pattern')form.append(this.label('固定开头',this.field(r.prefix,'开头',v=>update('prefix',v),{maxLength:100})),
             this.row(this.label('中间最少汉字',node('input',{type:'number',class:'text_pole',min:1,max:30,value:r.min,'aria-label':'中间最少汉字',oninput:e=>update('min',Number(e.target.value))})),this.label('最多汉字',node('input',{type:'number',class:'text_pole',min:1,max:30,value:r.max,'aria-label':'最多汉字',oninput:e=>update('max',Number(e.target.value))}))),
             this.label('固定结尾',this.field(r.suffix,'结尾',v=>update('suffix',v),{maxLength:100})));
