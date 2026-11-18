@@ -570,8 +570,9 @@ export class Manager{
         body.append(node('p',{},'检查已启用的分类与条目。相同原词对应不同结果，或相同条件采用不同处理时，会列出来源。'),search,results);draw();
     }
     renderBackup(body){
-        const input=node('input',{type:'file',accept:'.json,application/json','aria-label':'选择 JSON 文件'}),preview=node('div',{}),feedback=node('p',{role:'status'});
-        const mode=this.select('merge','导入方式',{merge:'追加分类',replace:'恢复完整配置'},()=>{});let incoming=null;
+        const input=node('input',{type:'file',accept:'.json,application/json,text/plain',hidden:true,tabIndex:-1,'aria-label':'JSON 文件'}),preview=node('div',{}),feedback=node('p',{role:'status',class:'wr-import-feedback'});
+        const filename=node('span',{class:'wr-import-filename'},'尚未选择文件');
+        const mode=this.select('merge','导入方式',{merge:'追加分类',replace:'恢复完整配置'},()=>{});let incoming=null,readVersion=0;
         const parts={groups:true,ruleGroups:true,protectionGroups:true};
         const confirm=this.btn('确认导入',()=>{
             if(!incoming)throw new Error('请先选择文件。');
@@ -582,18 +583,33 @@ export class Manager{
                 const data={...this.s,groups:[...this.s.groups,...(parts.groups?incoming.groups:[])],ruleGroups:[...this.s.ruleGroups,...(parts.ruleGroups?incoming.ruleGroups:[])],protectionGroups:[...this.s.protectionGroups,...(parts.protectionGroups?incoming.protectionGroups:[])]};
                 this.app.settings=validateSettings(data);
             }
-            this.selected={};this.clipboard=null;this.draft=null;this.selection.clear();this.save();this.render();this.notice('导入完成，分类已更新。');
+            this.selected={};this.clipboard=null;this.draft=null;this.selection.clear();this.save();this.render();
+            this.body.querySelector('.wr-import-feedback').textContent='导入完成，分类已更新。';
         },{class:'wr-button menu_button wr-primary',disabled:true});
-        input.addEventListener('change',this.safe(async()=>{
-            incoming=null;confirm.disabled=true;preview.replaceChildren();feedback.textContent='正在读取…';
-            try{const file=input.files[0];if(!file){feedback.textContent='请选择文件。';return;}if(file.size>10*1024*1024)throw new Error('文件上限为 10 MB。');
-                incoming=validateSettings(JSON.parse((await file.text()).replace(/^\uFEFF/,'')));compile(incoming);
+        const reset=()=>{readVersion++;incoming=null;confirm.disabled=true;preview.replaceChildren();};
+        const read=async(source,size)=>{
+            reset();const version=readVersion;feedback.textContent='正在读取…';
+            try{
+                if(size>10*1024*1024)throw new Error('文件或文本上限为 10 MB。');
+                const text=await source();if(version!==readVersion)return;
+                const parsed=validateSettings(JSON.parse(text.replace(/^\uFEFF/,'')));compile(parsed);incoming=parsed;
+                Object.assign(parts,{groups:true,ruleGroups:true,protectionGroups:true});
                 for(const [key,title,itemKey]of [['groups','词库','rules'],['ruleGroups','条件规则','rules'],['protectionGroups','保护词','terms']])preview.append(this.check(`${title}：${incoming[key].length} 个分类，${incoming[key].reduce((n,g)=>n+g[itemKey].length,0)} 条`,true,v=>parts[key]=v));
-                feedback.textContent='读取完成。追加时选择内容类型；恢复完整配置时采用文件中的全部设置。';confirm.disabled=false;
-            }catch(e){feedback.textContent=`读取失败：${e.message}`;throw e;}
-        }));
+                feedback.textContent='读取完成，选择导入方式后确认。';confirm.disabled=false;
+            }catch(e){if(version===readVersion){incoming=null;confirm.disabled=true;feedback.textContent=`读取失败：${e.message}`;}}
+        };
+        const pasted=this.area('','粘贴词库 JSON 内容',()=>{reset();filename.textContent='粘贴内容';feedback.textContent='点击“读取粘贴内容”进行检查。';},7);
+        const pastePanel=node('div',{class:'wr-import-paste',hidden:true},pasted,this.btn('读取粘贴内容',()=>read(()=>pasted.value,new Blob([pasted.value]).size)));
+        // ST hides native file inputs. Keep a visible button and open the picker
+        // synchronously in its click handler, including on mobile browsers.
+        const choose=this.btn('选择 JSON 文件',()=>{input.value='';input.click();},{class:'wr-button menu_button wr-primary wr-import-choose'});
+        input.addEventListener('change',()=>{
+            const file=input.files[0];if(!file)return;
+            filename.textContent=file.name;pastePanel.hidden=true;pasted.value='';read(()=>file.text(),file.size);
+        });
+        const paste=this.btn('粘贴 JSON',()=>{pastePanel.hidden=!pastePanel.hidden;if(!pastePanel.hidden)pasted.focus();});
         const section=this.select('all','导出内容',{all:'完整配置',groups:'全部词库',ruleGroups:'全部条件规则',protectionGroups:'全部保护词'},()=>{});
-        body.append(node('section',{class:'wr-import-card'},node('h4',{},'导入'),input,preview,mode,feedback,confirm),
+        body.append(node('section',{class:'wr-import-card'},node('h4',{},'导入'),this.row(choose,paste),input,filename,pastePanel,preview,mode,feedback,confirm),
             node('section',{class:'wr-import-card'},node('h4',{},'导出'),section,this.btn('导出 JSON',()=>{
                 const s=structuredClone(this.s);if(section.value!=='all'){
                     if(section.value==='protectionGroups'){
