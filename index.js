@@ -2,9 +2,10 @@ import {createBlankSettings,validateSettings,compile,uid,setReplacement} from '.
 import {syncGroups} from './model.js';
 import {installRuntime} from './runtime.js';
 import {Manager} from './manager.js';
+import {installNovelReader} from './novel-reader.js';
 
 const KEY='st_word_replacer';
-let settings,runner,runtime,manager,dialog,selectedText='';
+let settings,runner,runtime,manager,dialog,novelReader,selectedText='';
 const context=()=>SillyTavern.getContext();
 const node=(tag,attrs={},...children)=>{
     const el=document.createElement(tag);for(const [key,value]of Object.entries(attrs)){
@@ -15,7 +16,7 @@ const protect=fn=>async(...args)=>{try{await fn(...args);}catch(e){report(e);}};
 const button=(text,fn,attrs={})=>node('button',{type:'button',class:'menu_button wr-button',onclick:protect(fn),...attrs},text);
 function report(error){console.error('[ST-WordReplacer]',error);manager?.notice(error.message,true);globalThis.toastr?.error(error.message,'词汇快捷替换');}
 function remember(){
-    syncGroups(settings);runner=compile(settings);context().extensionSettings[KEY]=settings;context().saveSettingsDebounced();runtime?.refresh();
+    syncGroups(settings);runner=compile(settings);context().extensionSettings[KEY]=settings;context().saveSettingsDebounced();runtime?.refresh();novelReader?.refresh();
 }
 export function openManager(prefill=''){manager?.open(prefill);dialog=manager?.dialog;}
 function upsert({category='日常用词',from,to=''}){
@@ -34,7 +35,7 @@ export function mountEntrypoints() {
             node('div',{class:'inline-drawer-icon fa-solid fa-circle-chevron-down down'}));
         const content=node('div',{class:'inline-drawer-content'},
             button('打开词库管理',()=>openManager()),
-            node('small',{},'v1.2.7 · 开发测试版 · 词库 · 条件规则 · 保护词'),
+            node('small',{},'v1.2.8 · 开发测试版 · 词库 · 条件规则 · 保护词'),
             node('small',{},'也可从聊天输入区旁的魔法棒打开词库管理。'));
         host.append(node('div',{id:'wr-settings',class:'wr-settings'},node('div',{class:'inline-drawer'},header,content)));
     }
@@ -72,6 +73,7 @@ export function initialize(){
         if(inChat&&text&&text.length<=200){selectedText=text;selectionButton.hidden=false;}else selectionButton.hidden=true;
     });selectionButton.addEventListener('mousedown',e=>e.preventDefault());
     runtime=installRuntime(context,()=>settings,()=>runner,{onError:report});
+    novelReader=installNovelReader(()=>settings,()=>runner,{onError:report});
     const types=c.eventTypes??c.event_types;
     if(types.CHAT_CHANGED)c.eventSource.on(types.CHAT_CHANGED,()=>{selectionButton.hidden=true;});
     globalThis.STWordReplacer=Object.freeze({open:openManager,preview:text=>runner.run(String(text)),export:()=>structuredClone(settings),upsert,

@@ -17,6 +17,7 @@ export function patchDisplayText(root,settings,runner,records){
             const old=records.get(el),source=old&&el.data===old.output?old.source:el.data;
             entries.push({node:el,source,start:input.length,end:input.length+source.length});input+=source;return;
         }
+        if(el.nodeType===11){for(const child of el.childNodes)visit(child);return;}
         if(el.nodeType!==1)return;
         if(blocked.has(el.tagName)||el.hidden||el.getAttribute('aria-hidden')==='true'||el.getAttribute('contenteditable')==='true'||
             (settings.protectCode&&['PRE','CODE'].includes(el.tagName))){restore(el);boundary();return;}

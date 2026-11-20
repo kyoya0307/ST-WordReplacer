@@ -375,13 +375,33 @@ export class Manager{
         if(r.kind==='context')content.append(this.contextGuide(r,g));
         if(r.action==='replace')content.append(node('small',{},'替换为'),chips([r.to===''?'〔空文本〕':r.to]));
         if(r.filters){
-            for(const [key,label]of Object.entries(FILTER_FIELDS))if(r.filters[key]?.length)content.append(node('small',{},`${label}${['contains','excludes'].includes(key)?`（${r.filters.scope==='clause'?'同分句':'同一句'}）`:''}`),chips(r.filters[key]));
+            for(const [key,label]of Object.entries(FILTER_FIELDS))if(r.filters[key]?.length)content.append(this.quickFilter(r,key,label));
             if(r.filters.boundary!=='any')content.append(node('small',{},`文字边界：${BOUNDARIES[r.filters.boundary]}`));
             if(r.filters.maxClauses)content.append(node('small',{},`最多涉及 ${r.filters.maxClauses} 个相邻分句`));
             if(r.filters.ordered)content.append(node('small',{},'按关键词填写顺序匹配'));
             if(r.filters.distance)content.append(node('small',{},`关键词最多相隔 ${r.filters.distance} 字`));
         }
         return content;
+    }
+    quickFilter(r,key,label){
+        const box=node('section',{class:'wr-quick-filter','aria-label':label}),title=label+(['contains','excludes'].includes(key)?`（${r.filters.scope==='clause'?'同分句':'同一句'}）`:'');
+        const draw=()=>{
+            box.replaceChildren(this.row(node('small',{},title),this.btn('编辑',edit,{'aria-label':`快捷编辑：${label}`,class:'wr-button menu_button wr-filter-edit'})),
+                node('div',{class:'wr-keyword-chips'},...r.filters[key].map(v=>node('span',{},v))));
+        };
+        const edit=()=>{
+            const input=this.area(r.filters[key].join('\n'),label+'（快捷编辑）',null,5),error=node('small',{class:'wr-error',role:'alert',hidden:true});
+            const save=()=>{
+                try{
+                    const values=input.value.split(/[\r\n,，]+/).map(v=>v.trim()).filter(Boolean),filters=validateFilters({...r.filters,[key]:values});
+                    validateRule({...r,filters});r.filters=filters;this.save();draw();box.querySelector('button')?.focus();
+                }catch(e){error.textContent=e.message;error.hidden=false;}
+            };
+            box.replaceChildren(node('small',{},title),input,node('small',{},'每行一项，也可用逗号分隔。'),error,
+                this.row(this.btn('保存',save,{class:'wr-button menu_button wr-primary'}),this.btn('取消',()=>{draw();box.querySelector('button')?.focus();})));
+            input.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();draw();box.querySelector('button')?.focus();}else if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();save();}});input.focus();
+        };
+        draw();return box;
     }
     renderRules(content,g){
         const list=node('div',{class:'wr-template-list'});
