@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSettings, validateSettings, validateExceptions, compile, parseBatch, replaceMessage, inspectRules, planPaste, pasteRules } from '../engine.js';
+import { createSettings, validateSettings, validateExceptions, compile, parseBatch, inspectRules, planPaste, pasteRules } from '../engine.js';
 import { displayCopy, transformPrompt } from '../runtime.js';
 function custom(rules, extras={}) {
     return {...createSettings(),contextual:false,groups:[{id:'test',name:'测试',enabled:true,rules:rules.map(([from,to])=>({from,to,enabled:true}))}],...extras};
@@ -81,15 +81,6 @@ test('有效备份往返及深拷贝',()=>{
     const s=createSettings(),copy=validateSettings(JSON.parse(JSON.stringify(s)));
     assert.equal(copy.groups.flatMap(g=>g.rules).length,124);
     copy.groups[0].rules[0].to='其他';assert.notEqual(s.groups[0].rules[0].to,'其他');
-});
-test('替换正文及当前 swipe，不动其他候选、推理区或系统消息',()=>{
-    const runner=compile(custom([['原','新']]));const m={mes:'原',swipe_id:1,swipes:['原','原'],extra:{reasoning:'原'}};
-    const snapshot=replaceMessage(m,runner);assert.equal(m.mes,'新');assert.deepEqual(m.swipes,['原','新']);assert.equal(m.extra.reasoning,'原');assert.equal(snapshot.original,'原');
-    const system={mes:'原',is_system:true};assert.equal(replaceMessage(system,runner),null);assert.equal(system.mes,'原');
-});
-test('没有 swipe 数组的消息和无命中消息',()=>{
-    const runner=compile(custom([['原','新']]));const m={mes:'原'};
-    assert.equal(replaceMessage(m,runner).replacement,'新');assert.equal(replaceMessage(m,runner),null);
 });
 test('重复只提示，仅同时启用的不同替换列为冲突，并显示当前胜出规则',()=>{
     const s=custom([['甲','乙']]);s.groups.push({id:'b',name:'分类二',enabled:true,rules:[{id:'2',from:'甲',to:'乙',enabled:true}]});

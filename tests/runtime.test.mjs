@@ -14,7 +14,7 @@ function host({native=true,source='原词',iframe=false,rich=false}={}) {
         querySelectorAll(){return [];},getAttribute(){return '0';}};
     globalThis.document={querySelector:()=>element,querySelectorAll:()=>[element],getElementById:()=>null};
     const context={chat:[{mes:source,is_user:false,extra:{reasoning:'原词'},swipes:[source]}],
-        eventTypes:Object.fromEntries(['MESSAGE_EDITED','MESSAGE_UPDATED','CHARACTER_MESSAGE_RENDERED','USER_MESSAGE_RENDERED','MESSAGE_SWIPED','CHAT_CHANGED','MORE_MESSAGES_LOADED'].map(k=>[k,k])),
+        eventTypes:Object.fromEntries(['MESSAGE_EDITED','MESSAGE_UPDATED','CHARACTER_MESSAGE_RENDERED','USER_MESSAGE_RENDERED','MESSAGE_SWIPED','CHAT_CHANGED','MORE_MESSAGES_LOADED','STREAM_TOKEN_RECEIVED','GENERATION_STARTED','GENERATION_ENDED','GENERATION_STOPPED'].map(k=>[k,k])),
         eventSource:{on(key,fn){const list=handlers.get(key)??[];list.push(fn);handlers.set(key,list);}},
         updateMessageBlock(id,message){updates.push({id,message});element.output=native?format(message.extra?.display_text??message.mes,{messageId:id,isUser:message.is_user,isSystem:message.is_system}):message.extra?.display_text??message.mes;element.iframe=false;},
     };
@@ -129,4 +129,51 @@ test('旧版重新渲染普通消息后重新替换，不误用上一次 DOM 缓
     const h=host({native:false});h.runtime.render(0);assert.equal(h.element.output,'新词');
     h.element.output='原词';h.emit('CHARACTER_MESSAGE_RENDERED');await settle();assert.equal(h.element.output,'新词');assert.equal(h.updates.length,2);
     const request=[{...h.context.chat[0],extra:{}}];await globalThis.STWordReplacerPrompt(request,0,()=>{},'normal');assert.equal(request[0].mes,'新词');assert.equal(h.context.chat[0].mes,'原词');
+});
+
+test('新版富文本在消息完成前处理多次流式输出，保留源文与界面',async()=>{
+    const h=host({source:'<p>原词</p>',rich:true,iframe:true});
+    h.context.streamingProcessor={messageId:0,type:'normal'};h.emit('GENERATION_STARTED');
+    for(const text of ['原','原词','原词原词']){
+        h.context.chat[0].mes=`<p>${text}</p>`;h.prose.data=text;h.format(h.context.chat[0].mes);h.emit('STREAM_TOKEN_RECEIVED',text);
+        await new Promise(r=>setTimeout(r,65));assert.equal(h.prose.data,text.replaceAll('原词','新词'));
+        assert.equal(h.context.chat[0].mes,`<p>${text}</p>`);
+    }
+    h.emit('STREAM_TOKEN_RECEIVED');await new Promise(r=>setTimeout(r,65));assert.equal(h.prose.data,'新词新词');
+    h.emit('GENERATION_ENDED');assert.equal(h.element.iframe,true);assert.equal(h.updates.length,0);assert.deepEqual(h.errors,[]);await settle();
+});
+
+test('旧版流式直接更新正文节点，停止时刷新尾部且不重画消息',async()=>{
+    const h=host({native:false,rich:true});h.context.streamingProcessor={messageId:0,type:'normal'};
+    h.emit('STREAM_TOKEN_RECEIVED');await new Promise(r=>setTimeout(r,65));assert.equal(h.prose.data,'新词');
+    h.context.chat[0].mes='原词尾部';h.prose.data='原词尾部';h.emit('STREAM_TOKEN_RECEIVED');h.emit('GENERATION_STOPPED');
+    assert.equal(h.prose.data,'新词尾部');assert.equal(h.context.chat[0].mes,'原词尾部');assert.equal(h.updates.length,0);await settle();
+});
+
+test('流式追加到已替换节点时从原始前缀重算，保留后文条件可以恢复',async()=>{
+    const h=host({native:false,rich:true,source:'我靠'});h.settings.groups[0].rules=[];
+    h.settings.ruleGroups=[{id:'r',name:'词语边界',enabled:true,defaultAction:'word',rules:[{id:'a',name:'',kind:'keywords',keywords:['我靠'],matchMode:'any',action:'replace',to:'靠北',enabled:true,filters:{exceptAfter:['近']}}]}];
+    h.context.streamingProcessor={messageId:0,type:'normal'};h.prose.data='我靠';h.emit('STREAM_TOKEN_RECEIVED');await new Promise(r=>setTimeout(r,65));assert.equal(h.prose.data,'靠北');
+    h.context.chat[0].mes+='近';h.prose.data+='近';h.emit('STREAM_TOKEN_RECEIVED');await new Promise(r=>setTimeout(r,65));assert.equal(h.prose.data,'我靠近');
+    h.emit('GENERATION_ENDED');assert.equal(h.context.chat[0].mes,'我靠近');assert.equal(h.updates.length,0);await settle();
+});
+
+test('原生普通文本流式继续经过原格式化入口，避免二次替换',async()=>{
+    const h=host({rich:true});h.context.streamingProcessor={messageId:0,type:'normal'};
+    h.prose.data=h.format('原词');h.emit('STREAM_TOKEN_RECEIVED');await new Promise(r=>setTimeout(r,65));
+    assert.equal(h.prose.data,'新词');assert.equal(h.updates.length,0);h.emit('GENERATION_ENDED');await settle();
+});
+
+test('流式切换聊天和代写用户消息时取消旧更新',async()=>{
+    const h=host({native:false,rich:true});h.context.streamingProcessor={messageId:0,type:'impersonate'};
+    h.emit('STREAM_TOKEN_RECEIVED');await new Promise(r=>setTimeout(r,65));assert.equal(h.prose.data,'原词');
+    h.context.streamingProcessor.type='normal';h.emit('STREAM_TOKEN_RECEIVED');h.context.chat=[{mes:'新聊天',is_user:false}];h.emit('CHAT_CHANGED');
+    await new Promise(r=>setTimeout(r,65));assert.equal(h.prose.data,'原词');h.emit('GENERATION_ENDED');await settle();
+});
+
+test('流式删除后的空节点继续追加，停用显示时可恢复原词',async()=>{
+    const h=host({native:false,rich:true});h.settings.groups[0].rules=[{from:'原词',to:'',enabled:true}];h.context.streamingProcessor={messageId:0,type:'normal'};
+    h.emit('STREAM_TOKEN_RECEIVED');await new Promise(r=>setTimeout(r,65));assert.equal(h.prose.data,'');
+    h.context.chat[0].mes='原词尾部';h.prose.data+='尾部';h.emit('STREAM_TOKEN_RECEIVED');await new Promise(r=>setTimeout(r,65));assert.equal(h.prose.data,'尾部');
+    h.settings.display=false;h.emit('STREAM_TOKEN_RECEIVED');h.emit('GENERATION_ENDED');assert.equal(h.prose.data,'原词尾部');assert.equal(h.context.chat[0].mes,'原词尾部');assert.equal(h.updates.length,0);await settle();
 });

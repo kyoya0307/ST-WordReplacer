@@ -55,12 +55,12 @@ export function compileConditions(s){
                 spans=boundary(input,protectedRanges,true).deletions;
             }
             else{
-                matches=r.kind==='correction'?correctionSpans(input,r):pattern?[...input.matchAll(new RegExp(pattern.source,pattern.flags))].map(m=>({start:m.index,end:m.index+m[0].length})):keywordMatches(input,r,protectedRanges,hit=>{
+                matches=r.kind==='correction'?correctionSpans(input,r):pattern?[...input.matchAll(pattern)].map(m=>({start:m.index,end:m.index+m[0].length})):keywordMatches(input,r,protectedRanges,hit=>{
                     if(explain&&preserved.length<100)preserved.push({text:input.slice(hit.start,hit.end),reason:'关键词位于受保护的文字内',group:g.name,rule:triggerTitle(r)});
                     blocked(hit,protectedRanges.filter(p=>overlaps(p,hit)));
                 });
                 matches=matches.filter(hit=>{
-                    const reason=filterReason(input,hit,r.filters);if(reason&&explain&&preserved.length<100)preserved.push({text:input.slice(hit.start,hit.end),reason,group:g.name,rule:triggerTitle(r)});if(reason)emit({...hit,kind:reason.includes('保留')||reason.includes('汉字相连')?'protect':'skip',text:input.slice(hit.start,hit.end),reason:filterExplanation(input,hit,r.filters,reason)});return !reason;
+                    const reason=filterReason(input,hit,r.filters);if(reason&&explain){if(preserved.length<100)preserved.push({text:input.slice(hit.start,hit.end),reason,group:g.name,rule:triggerTitle(r)});emit({...hit,kind:reason.includes('保留')||reason.includes('汉字相连')?'protect':'skip',text:input.slice(hit.start,hit.end),reason:filterExplanation(input,hit,r.filters,reason)});}return !reason;
                 });
                 if(['clause','sentence'].includes(action))spans=expandMatches(input,matches,action);
                 else spans=matches.flatMap(m=>m.members??[m]);
@@ -73,8 +73,10 @@ export function compileConditions(s){
             }
             spans=spans.filter(span=>{
                 const blocked=protectedRanges.some(p=>overlaps(span,p)),reason=filterReason(input,span,r.kind==='boundary'?r.filters:undefined);
-                if(reason)emit({...span,kind:'skip',text:input.slice(span.start,span.end),reason});
-                else if(blocked)for(const p of protectedRanges.filter(p=>overlaps(span,p)))emit({start:Math.max(span.start,p.start),end:Math.min(span.end,p.end),kind:'protect',text:input.slice(Math.max(span.start,p.start),Math.min(span.end,p.end)),reason:'保护优先，其余命中内容继续清理',protectors:[{...p,text:input.slice(p.start,p.end)}]});
+                if(explain){
+                    if(reason)emit({...span,kind:'skip',text:input.slice(span.start,span.end),reason});
+                    else if(blocked)for(const p of protectedRanges.filter(p=>overlaps(span,p)))emit({start:Math.max(span.start,p.start),end:Math.min(span.end,p.end),kind:'protect',text:input.slice(Math.max(span.start,p.start),Math.min(span.end,p.end)),reason:'保护优先，其余命中内容继续清理',protectors:[{...p,text:input.slice(p.start,p.end)}]});
+                }
                 if((blocked||reason)&&explain&&preserved.length<100)preserved.push({text:reason||['replace','trimPrefix'].includes(action)?input.slice(span.start,span.end):protectedRanges.filter(p=>overlaps(span,p)).map(p=>input.slice(Math.max(span.start,p.start),Math.min(span.end,p.end))).join('、'),reason:reason||'保留命中的保护文字，其余清理继续',group:g.name,rule:triggerTitle(r)});
                 return !reason&&(!blocked||!['replace','trimPrefix'].includes(action));
             });

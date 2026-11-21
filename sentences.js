@@ -3,7 +3,6 @@ import {clipDialogueSpans,literalAnchors,finishDialogueSpans} from './dialogue.j
 import {subtractRanges} from './protection.js';
 export const SENTENCE_ENDS='。.!！?？；;…';
 export const SENTENCE_STARTS='，,：:'+SENTENCE_ENDS;
-export const SENTENCE_PRESETS={punctuation:'上一个标点之后 → 句末',sentence:'完整句子（逗号不分句）'};
 export function sentenceTemplate(keyword,preset='punctuation') {
     return {keyword,enabled:true,startChars:preset==='sentence'?SENTENCE_ENDS:SENTENCE_STARTS,endChars:SENTENCE_ENDS};
 }

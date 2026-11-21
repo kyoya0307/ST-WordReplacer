@@ -1,5 +1,7 @@
 // 自动处理只作用于显示副本和生成请求副本，从不修改 chat / swipes / extra。
 import { patchDisplayText } from './display-dom.js';
+import {installStreamingDisplay} from './streaming.js';
+const unchanged={run:text=>({text,hits:[],edits:[]})};
 export function scopeAllows(settings, message) {
     return !!(settings.enabled && message && !message.is_system && message.extra?.type!=='narrator' &&
         (message.is_user ? settings.user : settings.assistant));
@@ -39,12 +41,16 @@ export function transformPrompt(messages, settings, runner, {sourceChat, reasoni
     });
 }
 export function installRuntime(getContext,getSettings,getRunner,{loadNativeRegex=()=>import('../../regex/engine.js'),onError=console.error}={}) {
-    let timer=null, regexPromise;
+    let timer=null, regexPromise,streaming;
     const c=getContext(),types=c.eventTypes??c.event_types??{};
     const formatter=c.messageFormatter;
     const nativeFormatting=typeof formatter?.addHook==='function'&&!!formatter.stage?.BEFORE_REGEX;
     const formatted=new Map(),legacyRendered=new WeakMap(),editing=new Set(),domRecords=new WeakMap();
     const sourceText=m=>typeof m.extra?.display_text==='string'?m.extra.display_text:m.mes;
+    const patchProse=(root,message,id,options)=>{
+        const s=getSettings(),enabled=s.display&&scopeAllows(s,message)&&!editing.has(id);
+        patchDisplayText(root,s,enabled?getRunner():unchanged,domRecords,options);
+    };
     const hasMarkup=input=>/<!doctype\b|<\/?[a-z][^>]*>/i.test(input??'');
     const deferFormatting=(input,message)=>hasMarkup(input)||hasMarkup(message&&sourceText(message));
     const transform=(input,meta)=>{
@@ -85,14 +91,12 @@ export function installRuntime(getContext,getSettings,getRunner,{loadNativeRegex
         const el=document.querySelector(`#chat .mes[mesid="${id}"]`);
         if(!el||el.querySelector('.edit_textarea,.reasoning_edit_textarea'))return;
         const input=sourceText(m);
+        if(streaming?.isActive(id)&&(!nativeFormatting||hasMarkup(input))){patchStreaming(id);return;}
         // 含界面的消息不整条重画；无格式化接口时，只就地更新可读正文。
         if(hasFrontend(el,input)){
             if(!nativeFormatting||hasMarkup(input)||formatted.get(id)?.deferred){
                 const root=el.querySelector('.mes_text');
-                if(root){
-                    const s=getSettings(),enabled=s.display&&scopeAllows(s,m)&&!editing.has(id);
-                    patchDisplayText(root,s,enabled?getRunner():{run:text=>({text,hits:[],edits:[]})},domRecords);
-                }
+                if(root)patchProse(root,m,id);
             }
             return;
         }
@@ -115,27 +119,32 @@ export function installRuntime(getContext,getSettings,getRunner,{loadNativeRegex
         clearTimeout(timer);
         timer=setTimeout(()=>{document.querySelectorAll('#chat .mes[mesid]').forEach(el=>{try{render(Number(el.getAttribute('mesid')));}catch(e){onError(e);}});},120);
     };
-    if(!nativeFormatting){
-        for(const key of ['CHARACTER_MESSAGE_RENDERED','USER_MESSAGE_RENDERED','MESSAGE_SWIPED'])if(types[key])c.eventSource.on(types[key],id=>{
+    for(const key of ['CHARACTER_MESSAGE_RENDERED','USER_MESSAGE_RENDERED','MESSAGE_SWIPED','MESSAGE_UPDATED'])if(types[key])c.eventSource.on(types[key],id=>{
+        if(!nativeFormatting&&key==='MESSAGE_UPDATED'&&!getSettings().edited)return;
+        if(!nativeFormatting){
             // ST 刚重绘的普通楼层需要重新应用；不沿用上一版 DOM 的缓存。
             const el=document.querySelector(`#chat .mes[mesid="${Number(id)}"]`);
             if(el)legacyRendered.delete(el);
-            setTimeout(()=>{try{render(id);}catch(e){onError(e);}},0);
-        });
-        if(types.MESSAGE_UPDATED)c.eventSource.on(types.MESSAGE_UPDATED,id=>{if(getSettings().edited){
-            const el=document.querySelector(`#chat .mes[mesid="${Number(id)}"]`);
-            if(el)legacyRendered.delete(el);
-            setTimeout(()=>{try{render(id);}catch(e){onError(e);}},0);
-        }});
-        for(const key of ['CHAT_CHANGED','MORE_MESSAGES_LOADED'])if(types[key])c.eventSource.on(types[key],refresh);
+        }
+        setTimeout(()=>{try{render(id);}catch(error){onError(error);}},0);
+    });
+    for(const key of ['CHAT_CHANGED','MORE_MESSAGES_LOADED'])if(types[key])c.eventSource.on(types[key],refresh);
+    if(!nativeFormatting){
         const chat=document.getElementById('chat');
         if(chat){const observer=new window.MutationObserver(refresh);observer.observe(chat,{childList:true});}
-    }else{
-        for(const key of ['CHARACTER_MESSAGE_RENDERED','USER_MESSAGE_RENDERED','MESSAGE_SWIPED','MESSAGE_UPDATED'])if(types[key])c.eventSource.on(types[key],id=>{
-            setTimeout(()=>{try{render(id);}catch(error){onError(error);}},0);
-        });
-        for(const key of ['CHAT_CHANGED','MORE_MESSAGES_LOADED'])if(types[key])c.eventSource.on(types[key],refresh);
     }
+    function patchStreaming(id){
+        const ctx=getContext(),message=ctx.chat[id];if(!message)return;
+        // Plain native messages already pass through the formatting hook on each
+        // frame. A second DOM pass would cascade replacements such as A→B→C.
+        if(nativeFormatting&&!hasMarkup(sourceText(message)))return;
+        const el=document.querySelector(`#chat .mes[mesid="${id}"]`);
+        if(!el||el.querySelector('.edit_textarea,.reasoning_edit_textarea'))return;
+        const root=el.querySelector('.mes_text');if(!root)return;
+        // Update readable nodes only; do not repaint a live streaming message.
+        patchProse(root,message,id,{streamSource:sourceText(message)});
+    }
+    streaming=installStreamingDisplay(getContext,{onError,patch:patchStreaming});
     globalThis.STWordReplacerPrompt=async(messages,_size,_abort,type)=>{
         if(!getSettings().prompt||!getSettings().enabled)return;
         const c=getContext();

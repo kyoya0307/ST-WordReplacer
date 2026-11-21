@@ -34,16 +34,21 @@ export function contextRange(input,hit,scope='sentence'){
 }
 export function filterReason(input,hit,filters){
     if(!filters)return '';
-    const before=input.slice(0,hit.start),after=input.slice(hit.end),range=contextRange(input,hit,filters.scope),part=input.slice(range.start,range.end);
-    const prev=Array.from(before).at(-1)??'',next=Array.from(after)[0]??'';
+    const before=input.slice(0,hit.start),after=input.slice(hit.end);
+    // Only inspect adjacent code points; do not split the entire message into
+    // characters or sentences for a simple prefix/suffix condition.
+    const prev=Array.from(before.slice(-2)).at(-1)??'',next=Array.from(after.slice(0,2))[0]??'';
     if(filters.boundary==='han'&&[prev,next].some(c=>/\p{Script=Han}/u.test(c)))return '匹配片段与其他汉字相连';
     if(filters.boundary==='separated'&&[prev,next].some(c=>c&&!/[\s\p{P}\p{S}]/u.test(c)))return '匹配片段两侧仍有文字';
     if(filters.before?.length&&!filters.before.some(s=>before.endsWith(s)))return '前接条件未命中';
     if(filters.after?.length&&!filters.after.some(s=>after.startsWith(s)))return '后接条件未命中';
     if(filters.exceptBefore?.some(s=>before.endsWith(s)))return '命中前接保留条件';
     if(filters.exceptAfter?.some(s=>after.startsWith(s)))return '命中后接保留条件';
-    if(filters.contains?.length&&!filters.contains.every(s=>part.includes(s)))return '范围内的伴随词尚未齐全';
-    if(filters.excludes?.some(s=>part.includes(s)))return '命中范围内保留词';
+    if(filters.contains?.length||filters.excludes?.length){
+        const range=contextRange(input,hit,filters.scope),part=input.slice(range.start,range.end);
+        if(filters.contains?.length&&!filters.contains.every(s=>part.includes(s)))return '范围内的伴随词尚未齐全';
+        if(filters.excludes?.some(s=>part.includes(s)))return '命中范围内保留词';
+    }
     if(filters.maxClauses&&hit.members?.length>1){
         const unit=sentenceUnits(input).find(u=>u.start<=hit.start&&u.contentEnd>=hit.end);
         const count=unit?.clauses.filter(c=>c.end>hit.start&&c.start<hit.end).length;

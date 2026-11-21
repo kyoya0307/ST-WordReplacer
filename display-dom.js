@@ -1,7 +1,7 @@
 // 旧版 ST 的保守兼容显示：只改可读正文的文本节点，保留所有标签、属性和 iframe。
 const blocked=new Set(['IFRAME','OBJECT','EMBED','SCRIPT','STYLE','CUSTOM-STYLE','TEXTAREA','BUTTON','SVG','MATH']);
 const blocks=new Set(['P','DIV','SECTION','ARTICLE','LI','UL','OL','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','DETAILS','SUMMARY','TR']);
-export function patchDisplayText(root,settings,runner,records){
+export function patchDisplayText(root,settings,runner,records,{streamSource}={}){
     const entries=[];let input='',changed=0;
     const restore=el=>{
         if(el.nodeType===3){
@@ -14,7 +14,13 @@ export function patchDisplayText(root,settings,runner,records){
     const boundary=()=>{if(input&&!input.endsWith('\n'))input+='\n';};
     const visit=el=>{
         if(el.nodeType===3){
-            const old=records.get(el),source=old&&el.data===old.output?old.source:el.data;
+            const old=records.get(el);let source=old&&el.data===old.output?old.source:el.data;
+            // Some stream renderers append to an existing, already-patched node.
+            // Recover its raw prefix only when the message source confirms it.
+            if(old&&typeof streamSource==='string'&&el.data!==old.output&&el.data.startsWith(old.output)){
+                const appended=old.source+el.data.slice(old.output.length);
+                if(streamSource.includes(appended))source=appended;
+            }
             entries.push({node:el,source,start:input.length,end:input.length+source.length});input+=source;return;
         }
         if(el.nodeType===11){for(const child of el.childNodes)visit(child);return;}

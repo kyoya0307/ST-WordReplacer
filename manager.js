@@ -1,5 +1,5 @@
 import { uid, THEMES, compile, inspectRules, parseBatch, setReplacement, createTransfer, pasteTransfer, planPaste, validateSettings } from './engine.js';
-import { groupState, syncGroups, ACTIONS, KINDS, validateRule, ruleSummary, literalConflicts,contextGroup } from './model.js';
+import { groupState, syncGroups, ACTIONS, KINDS, validateRule, ruleSummary, literalConflicts } from './model.js';
 import { CONTEXT_RULES, CONTEXT_REVIEWS, CONTEXT_SAFETY,contextKeep,validateContextKeep } from './legacy.js';
 import {FILTER_FIELDS,FILTER_EXAMPLES,BOUNDARIES,validateFilters} from './filters.js';
 import {searchEntries} from './search.js';

@@ -13,15 +13,15 @@ export function compileContextGroups(s){
             const {g,r,engine,stage:ownStage,guard}=row;
             if(stage!==ownStage)continue;
             const emit=e=>record({group:g.name,groupId:g.id,rule:r.name||r.template,ruleId:r.id,sourceType:'condition',...e});
-            row.onPreserve=e=>{if(explain&&preserved.length<100)preserved.push({...e,group:g.name});emit({...e,kind:'protect',sourceType:'builtin',reason:e.reason});};
+            row.onPreserve=explain?e=>{if(preserved.length<100)preserved.push({...e,group:g.name});emit({...e,kind:'protect',sourceType:'builtin',reason:e.reason});}:null;
             text=engine.run(text,stage,(from,to)=>hit(from,to,`条件规则 · ${g.name} · ${r.name}`),null,(input,pattern,fn)=>{
                 const ranges=rangesFor(guard,input);
                 return replace(input,pattern,(...args)=>{
                     const start=args[typeof args.at(-1)==='object'?args.length-3:args.length-2],end=start+args[0].length;
                     const protectors=ranges.filter(p=>p.start<end&&p.end>start),reason=protectors.length?'命中保护内容':filterReason(input,{start,end},r.filters);
-                    if(reason){if(explain&&preserved.length<100)preserved.push({text:args[0],reason,group:g.name,rule:r.name});emit({start,end,text:args[0],kind:protectors.length||reason.includes('保留')||reason.includes('汉字相连')?'protect':'skip',reason:filterExplanation(input,{start,end},r.filters,reason),protectors:protectors.map(p=>({...p,text:input.slice(p.start,p.end)}))});return args[0];}
+                    if(reason){if(explain){if(preserved.length<100)preserved.push({text:args[0],reason,group:g.name,rule:r.name});emit({start,end,text:args[0],kind:protectors.length||reason.includes('保留')||reason.includes('汉字相连')?'protect':'skip',reason:filterExplanation(input,{start,end},r.filters,reason),protectors:protectors.map(p=>({...p,text:input.slice(p.start,p.end)}))});}return args[0];}
                     const output=fn(...args);
-                    if(output!==args[0])emit({start,end,text:args[0],to:output,kind:output===''?'delete':'replace',reason:'命中语境规则'});
+                    if(explain&&output!==args[0])emit({start,end,text:args[0],to:output,kind:output===''?'delete':'replace',reason:'命中语境规则'});
                     return output;
                 });
             });
@@ -31,9 +31,10 @@ export function compileContextGroups(s){
     };
     // Preflight only normal-use decisions. These guards apply to overlapping
     // expression processing, while deliberate single-character replacements stay independent.
+    const normalRows=rows.filter(row=>row.r.safeContext!==false);
     run.normalRanges=input=>{
         const ranges=[];
-        for(const row of rows.filter(row=>row.r.safeContext!==false)){
+        for(const row of normalRows){
             row.onPreserve=e=>{
                 let start=e.start,text=e.text;
                 if(['direction','kinship','prefix'].includes(row.r.template)){

@@ -64,17 +64,20 @@ const sameReplacement=(a,b)=>JSON.stringify(replacementData(a))===JSON.stringify
 function copyReplacement(target,source) {
     const data=replacementData(source);delete target.alternatives;delete target.multiple;Object.assign(target,data);
 }
-export function createSettings() {
+function baseSettings() {
     return { version: 3, theme:'st', wordPageSize:15,wordOrder:'default',enabled: true, assistant: true, user: false, edited: true, display: true, prompt: true,
-        contextual: true, contextOptions:createContextOptions(), sentenceRules:[], protectCode: true, protectTitles: false, exceptions: [], groups:structuredClone(DEFAULT_GROUPS) };
+        contextual: true, contextOptions:createContextOptions(), sentenceRules:[], protectCode: true, protectTitles: false, exceptions: [], groups:[] };
+}
+export function createSettings() {
+    return {...baseSettings(),groups:structuredClone(DEFAULT_GROUPS)};
 }
 export function createBlankSettings(){
-    return {...createSettings(),version:4,contextual:false,groups:[{id:uid(),name:'日常用词',enabled:false,rules:[]}],ruleGroups:[],protectionGroups:[]};
+    return {...baseSettings(),version:4,contextual:false,groups:[{id:uid(),name:'日常用词',enabled:false,rules:[]}],ruleGroups:[],protectionGroups:[]};
 }
 export function validateSettings(data) {
     if (!data || ![1,2,3,4].includes(data.version) || !Array.isArray(data.groups)) throw new Error('支持 version 1～4 的词库备份。');
     if (data.groups.length > 200) throw new Error('分类不能超过 200 个。');
-    const base = createSettings();
+    const base = baseSettings();
     base.theme=typeof data.theme==='string'&&Object.hasOwn(THEMES,data.theme)?data.theme:'st';
     base.wordPageSize=WORD_PAGE_SIZES.includes(data.wordPageSize)?data.wordPageSize:15;
     base.wordOrder=Object.hasOwn(WORD_ORDERS,data.wordOrder)?data.wordOrder:'default';
@@ -102,7 +105,7 @@ const escape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // 长词优先、一次替换。后面的分类覆盖前面分类中的同名词；替换结果不再次参与匹配。
 export function compile(settings) {
-    const contextual=compileContext(settings.contextOptions);
+    const contextual=settings.contextual?compileContext(settings.contextOptions):null;
     const conditions=compileConditions(settings);
     const contextGroups=compileContextGroups(settings);
     const rules = new Map(),wordSources=new Map();
@@ -111,9 +114,12 @@ export function compile(settings) {
         const sources=wordSources.get(rule.from)??[];sources.push({...rule,group:group.name,groupId:group.id});wordSources.set(rule.from,sources);
         rules.set(rule.from, {...rule, group:group.name,groupId:group.id,deleteScope:rule.to===''?group.deleteScope:undefined});
     }
-    const categoryRules=[];
+    const categoryRules=[],categoryKeywords=new Map();
+    for(const rule of rules.values())if(['clause','sentence'].includes(rule.deleteScope)){
+        const keywords=categoryKeywords.get(rule.groupId)??[];keywords.push(rule.from);categoryKeywords.set(rule.groupId,keywords);
+    }
     for(const group of settings.groups){
-        const keywords=[...rules.values()].filter(r=>r.groupId===group.id&&['clause','sentence'].includes(r.deleteScope)).map(r=>r.from);
+        const keywords=categoryKeywords.get(group.id)??[];
         if(keywords.length)categoryRules.push({id:group.id,name:group.name,keywords,matchMode:'any',scope:group.deleteScope,enabled:true,respectProtection:true});
     }
     const sentences=compileSentenceRules(settings.contextual?settings.sentenceRules:[],categoryRules);
@@ -122,6 +128,7 @@ export function compile(settings) {
     const matcher = keys.length ? new RegExp(keys.map(escape).join('|'), 'gu') : null;
     const guard=protectionPattern(settings);
     const groupGuards=new Map(settings.groups.map(g=>[g.id,protectionPattern(settings,g.id)]));
+    const contextGuard=settings.contextual?protectionPattern(settings,'context'):null;
     return {
         conflicts:inspectRules(settings).filter(x=>x.kind==='conflict').map(x=>x.from),
         run(input,{trace=false,explain=false}={}) {
@@ -150,7 +157,7 @@ export function compile(settings) {
             if(settings.contextual||categoryRules.length){
                 const protectedRanges=guard?[...input.matchAll(new RegExp(guard.source,guard.flags))].map(m=>({start:m.index,end:m.index+m[0].length})):[];
                 const result=sentences(input,protectedRanges);input=result.text;deletions=result.deletions;
-                for(const span of deletions)record({...span,kind:'delete',text:span.text,to:'',sourceType:'condition',group:'旧版句段规则',rule:span.keywords.join(' / '),reason:'命中句段删除'});
+                if(explain)for(const span of deletions)record({...span,kind:'delete',text:span.text,to:'',sourceType:'condition',group:'旧版句段规则',rule:span.keywords.join(' / '),reason:'命中句段删除'});
                 diagnostics?.apply(deletions.map(span=>({...span,text:''})));
                 tracking?.apply(deletions.map(span=>({...span,text:''})));
                 for(const span of deletions)hit(span.text,'',`句段删除 · ${span.keywords.join(' / ')}`);
@@ -169,7 +176,6 @@ export function compile(settings) {
                     });
                     tracking?.apply(edits);diagnostics?.apply(edits);return output;
                 };
-                const contextGuard=protectionPattern(settings,'context');
                 const replaceContext=(text,pattern,fn)=>{
                     const ranges=rangesFor(contextGuard,text);
                     return replace(text,pattern,(...args)=>{const offset=args[typeof args.at(-1)==='object'?args.length-3:args.length-2];
@@ -184,13 +190,13 @@ export function compile(settings) {
                 if (matcher) str = replace(str,matcher, (word,offset) => {
                     const rule = rules.get(word);
                     const protectors=[...scopedRanges.get(rule.groupId)??[],...normalRanges.filter(p=>word.length>1&&p.text?.includes(word))].filter(r=>r.start<offset+word.length&&r.end>offset);
-                    const event={start:offset,end:offset+word.length,text:word,rule:word,ruleId:rule.id,group:rule.group,groupId:rule.groupId,sourceType:'dictionary'};
-                    for(const other of (wordSources.get(word)??[]).slice(0,-1))if(other.to!==rule.to)record({...event,ruleId:other.id,groupId:other.groupId,group:other.group,kind:'overridden',to:other.to,reason:'相同原词采用靠后的已启用分类',winner:{rule:word,ruleId:rule.id,group:rule.group,groupId:rule.groupId}});
+                    const event=explain?{start:offset,end:offset+word.length,text:word,rule:word,ruleId:rule.id,group:rule.group,groupId:rule.groupId,sourceType:'dictionary'}:null;
+                    if(explain)for(const other of (wordSources.get(word)??[]).slice(0,-1))if(other.to!==rule.to)record({...event,ruleId:other.id,groupId:other.groupId,group:other.group,kind:'overridden',to:other.to,reason:'相同原词采用靠后的已启用分类',winner:{rule:word,ruleId:rule.id,group:rule.group,groupId:rule.groupId}});
                     if(protectors.length){
-                        record({...event,kind:'protect',reason:'保护优先，本次词语替换保留',protectors:protectors.map(p=>({...p,text:str.slice(p.start,p.end)}))});
+                        if(explain)record({...event,kind:'protect',reason:'保护优先，本次词语替换保留',protectors:protectors.map(p=>({...p,text:str.slice(p.start,p.end)}))});
                         if(explain&&preserved.length<100)preserved.push({text:word,reason:'命中保护词或代码块',group:rule.group,rule:word});return word;
                     }
-                    record({...event,kind:rule.to===''?'delete':'replace',to:rule.to,reason:'命中词库；长词优先，同名原词按后置分类处理'});
+                    if(explain)record({...event,kind:rule.to===''?'delete':'replace',to:rule.to,reason:'命中词库；长词优先，同名原词按后置分类处理'});
                     hit(word,rule.to,rule.group);
                     return rule.to;
                 });
@@ -217,10 +223,9 @@ export function inspectRules(settings) {
         byFrom.set(rule.from,rows);
     }
     return [...byFrom].filter(([,rows])=>rows.length>1).map(([from,rows])=>{
-        const active=rows.filter(x=>x.active);
         const key=x=>JSON.stringify([x.to,x.deleteScope]);
-        return {from,rows,kind:new Set(rows.map(key)).size>1?'conflict':'duplicate',
-            activeConflict:new Set(active.map(key)).size>1,winner:active.at(-1)??null};
+        const conflict=new Set(rows.map(key)).size>1;
+        return {from,rows,kind:conflict?'conflict':'duplicate',activeConflict:conflict,winner:rows.at(-1)};
     });
 }
 
@@ -306,16 +311,3 @@ export function parseBatch(text) {
     return rules;
 }
 
-// 只修改当前选中的 swipe，保留其他候选文本。
-export function replaceMessage(message, runner) {
-    if (!message || message.is_system || typeof message.mes !== 'string') return null;
-    const original = message.mes;
-    const {text} = runner.run(original);
-    if (text === original) return null;
-    const swipeId = message.swipe_id;
-    const hasSwipe = Array.isArray(message.swipes) && Number.isInteger(swipeId) && swipeId >= 0 && swipeId < message.swipes.length;
-    const snapshot = {message,original,replacement:text,swipeId,originalSwipe:hasSwipe ? message.swipes[swipeId] : undefined};
-    message.mes = text;
-    if (hasSwipe) message.swipes[swipeId] = text;
-    return snapshot;
-}

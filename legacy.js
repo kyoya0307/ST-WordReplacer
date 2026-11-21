@@ -111,7 +111,7 @@ export function validateContextOptions(data) {
 export function compileContext(options,{safe=false,onPreserve=()=>{},keep}={}) {
     const config=validateContextOptions(options);
     if(safe)config.keep=keep??contextKeep(config);
-    const entries=CONTEXT_RULES.map(rule=>({...rule,config:config.rules[rule.id],steps:rule.steps.map(([pattern,replacement])=>{
+    const entries=CONTEXT_RULES.filter(rule=>config.rules[rule.id].enabled).map(rule=>({...rule,config:config.rules[rule.id],steps:rule.steps.map(([pattern,replacement])=>{
         let source=pattern.source;
         // 普通文本转义后再加入固定模板，配置不接受正则或代码。
         if(safe){
@@ -130,7 +130,7 @@ export function compileContext(options,{safe=false,onPreserve=()=>{},keep}={}) {
     return {
         run(text,stage,onHit=()=>{},onlyId=null,replace=(text,pattern,fn)=>text.replace(pattern,fn)){
             for(const rule of entries){
-                if(rule.stage!==stage||!rule.config.enabled||(onlyId&&rule.id!==onlyId))continue;
+                if(rule.stage!==stage||(onlyId&&rule.id!==onlyId))continue;
                 for(const [pattern,replacement] of rule.steps){
                     pattern.lastIndex=0;
                     text=replace(text,pattern,(...args)=>{
