@@ -1,3 +1,4 @@
+// 用途：追踪改字前后的文字位置。
 // 跟踪保留字符的原始位置，用于只修改 DOM 文本，不重建 HTML / iframe。
 export class TextTrace {
     constructor(source,origins=Array.from({length:source.length},(_,i)=>i)) {
