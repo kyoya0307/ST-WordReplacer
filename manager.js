@@ -1,3 +1,4 @@
+// 用途：词库与规则管理界面。
 import { uid, THEMES, compile, inspectRules, parseBatch, setReplacement, createTransfer, pasteTransfer, planPaste, validateSettings } from './engine.js';
 import { groupState, syncGroups, ACTIONS, KINDS, validateRule, ruleSummary, literalConflicts } from './model.js';
 import { CONTEXT_RULES, CONTEXT_REVIEWS, CONTEXT_SAFETY,contextKeep,validateContextKeep } from './legacy.js';
