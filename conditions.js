@@ -1,3 +1,4 @@
+// 用途：条件匹配与清理范围。
 import { preservePairedMarks, sentenceUnits } from './templates.js';
 import { compileSentenceRules } from './sentences.js';
 import { protectionTerms } from './model.js';
