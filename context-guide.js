@@ -1,3 +1,4 @@
+// 用途：内置规则说明与示例。
 // Reader-facing examples are evaluated against the user's current single-rule settings.
 export const CONTEXT_GUIDES = {
     combination: {
