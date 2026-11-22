@@ -1,3 +1,4 @@
+// 用途：按语境执行处理规则。
 import {compileContext,createContextOptions,CONTEXT_RULES} from './legacy.js';
 import {filterReason,filterExplanation} from './filters.js';
 import {protectionPattern,rangesFor} from './conditions.js';
