@@ -1,3 +1,4 @@
+// 用途：清理自我纠错片段。
 // Local correction template. Configured words and cues are literal text.
 import {sentenceUnits} from './templates.js';
 const escape=s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
