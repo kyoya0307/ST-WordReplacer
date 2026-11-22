@@ -1,3 +1,4 @@
+// 用途：预设触发模板与处理方式。
 import {CONTEXT_RULES} from './legacy.js';
 
 export const TRIGGER_PRESETS={
