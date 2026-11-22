@@ -1,3 +1,4 @@
+// 用途：保留命中的保护文字。
 // Subtract protected intervals while retaining the original offsets and edit metadata.
 export function subtractRanges(spans, guards) {
     let result = spans.map(span => ({...span}));
