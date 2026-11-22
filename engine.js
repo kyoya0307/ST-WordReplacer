@@ -1,3 +1,4 @@
+// 用途：编译词库与整合处理流程。
 import { DEFAULT_GROUPS } from './defaults.js';
 import { createContextOptions, validateContextOptions, compileContext } from './legacy.js';
 import { compileSentenceRules, validateSentenceRules } from './sentences.js';
