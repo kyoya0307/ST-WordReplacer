@@ -1,3 +1,4 @@
+// 用途：初始化扩展与管理入口。
 import {createBlankSettings,validateSettings,compile,uid,setReplacement} from './engine.js';
 import {syncGroups} from './model.js';
 import {installRuntime} from './runtime.js';
