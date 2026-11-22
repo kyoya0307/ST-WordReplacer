@@ -1,3 +1,4 @@
+// 用途：前后文条件与文字边界。
 import {sentenceUnits} from './templates.js';
 export const FILTER_FIELDS={before:'前接其中之一时处理',after:'后接其中之一时处理',exceptBefore:'前接其中之一时保留',exceptAfter:'后接其中之一时保留',contains:'范围内同时包含这些词',excludes:'范围内出现其中之一时保留'};
 export const FILTER_EXAMPLES={
