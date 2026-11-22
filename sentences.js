@@ -1,3 +1,4 @@
+// 用途：按标点划分与清理句段。
 import {validateTemplateRule,templateSpans,preservePairedMarks} from './templates.js';
 import {clipDialogueSpans,literalAnchors,finishDialogueSpans} from './dialogue.js';
 import {subtractRanges} from './protection.js';
