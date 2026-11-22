@@ -1,3 +1,4 @@
+// 用途：跨分类检索词条与规则。
 import {ruleSummary} from './model.js';
 import {CONTEXT_MATCH_TEXT} from './legacy.js';
 import {FILTER_FIELDS} from './filters.js';
