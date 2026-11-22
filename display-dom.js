@@ -1,3 +1,4 @@
+// 用途：处理富文本中的可读文字。
 // 旧版 ST 的保守兼容显示：只改可读正文的文本节点，保留所有标签、属性和 iframe。
 const blocked=new Set(['IFRAME','OBJECT','EMBED','SCRIPT','STYLE','CUSTOM-STYLE','TEXTAREA','BUTTON','SVG','MATH']);
 const blocks=new Set(['P','DIV','SECTION','ARTICLE','LI','UL','OL','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','DETAILS','SUMMARY','TR']);
