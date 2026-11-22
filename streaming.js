@@ -1,3 +1,4 @@
+// 用途：流式正文实时更新。
 // Streaming events precede ST's DOM write. Observe the active reply as well as
 // tokens, and coalesce updates without postponing them until generation ends.
 export function installStreamingDisplay(getContext,{patch,onError=console.error,interval=40}={}){
