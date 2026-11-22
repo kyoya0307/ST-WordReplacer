@@ -1,3 +1,4 @@
+/* 用途：配色与主题变量。 */
 /* 配色只作用于本扩展对话框，框体与输入区域使用更深的底色。 */
 #wr-manager {
     --wr-bg:var(--SmartThemeBlurTintColor,#20232b);
