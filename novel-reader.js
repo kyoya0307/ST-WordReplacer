@@ -1,3 +1,4 @@
+// 用途：生成章节显示副本。
 // ST-Novel-Reader compatibility. Only this extension installs the adapter;
 // the reader's files, original messages and persistent chat cache stay unchanged.
 import {scopeAllows} from './runtime.js';
