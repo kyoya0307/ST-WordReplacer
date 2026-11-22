@@ -1,3 +1,4 @@
+// 用途：筛选命中记录与定位原文。
 import {EVENT_LABELS} from './explanation.js';
 const node=(tag,attrs={},...children)=>{
     const e=document.createElement(tag);for(const [key,value]of Object.entries(attrs)){
