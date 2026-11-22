@@ -5,6 +5,7 @@
     --wr-border:var(--SmartThemeBorderColor,#666);
     --wr-accent:var(--SmartThemeQuoteColor,#8eace9);
     --wr-tint:color-mix(in srgb,var(--wr-accent) 10%,transparent);
+    --wr-muted:color-mix(in srgb,var(--wr-fg) 65%,transparent);
     --wr-warn:var(--SmartThemeBodyColor,#eee);
     --wr-error:var(--SmartThemeBodyColor,#eee);
     background:var(--wr-bg);color:var(--wr-fg);border-color:var(--wr-border);
@@ -43,10 +44,9 @@
 #wr-manager:not([data-theme="st"]) small {color:var(--wr-muted);opacity:1}
 #wr-manager .wr-active {outline-color:var(--wr-accent)}
 #wr-manager .wr-selected {background:var(--wr-tint);outline-color:var(--wr-accent)}
-#wr-manager .wr-audit-row,#wr-manager .wr-output,
-#wr-manager .wr-paste-panel,#wr-manager .wr-tabs,#wr-manager .wr-sidebar,
-#wr-manager .wr-status,
-#wr-manager .wr-conflict {color:var(--wr-warn)}
+#wr-manager .wr-audit-row,
+#wr-manager .wr-conflict,
+#wr-manager .wr-summary-warning {color:var(--wr-warn)}
 #wr-manager .wr-conflict-row {border-left-color:var(--wr-warn)}
 #wr-manager .wr-error {color:var(--wr-error)}
 #wr-manager .wr-cut-pending {outline-color:var(--wr-warn);background:var(--wr-tint)}

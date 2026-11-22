@@ -22,8 +22,8 @@ export class Manager{
     constructor(app){
         this.app=app;this.tab='词库';this.view='';this.selected={};this.search='';this.selection=new Set();this.clipboard=null;this.selecting=false;this.page=0;this.draft=null;this.wordDrafts=new Map();this.protectionMode='terms';this.conditionMode='presets';this.conditionPreset='keywords';this.morePresets=false;
         this.dialog=node('dialog',{id:'wr-manager',class:'wr-dialog','aria-label':'词汇快捷替换'});this.pane=node('div',{class:'wr-shell'});this.dialog.append(this.pane);document.body.append(this.dialog);
-        this.dialog.addEventListener('click',e=>{if(e.target===this.dialog)this.dialog.close();});
-        this.dialog.addEventListener('cancel',e=>{if(this.draft){e.preventDefault();this.draft=null;this.render();}});
+        this.dialog.addEventListener('click',e=>{if(e.target===this.dialog)this.closeDialog();});
+        this.dialog.addEventListener('cancel',e=>{e.preventDefault();this.closeDialog();});
     }
     get s(){return this.app.settings;}
     safe(fn){return async(...args)=>{try{await fn(...args);}catch(e){this.notice(e.message,true);this.app.report(e);}};}
@@ -35,51 +35,75 @@ export class Manager{
     label(title,control,help=''){return node('label',{class:'wr-field'},node('span',{},title),control,help?node('small',{},help):null);}
     row(...children){return node('div',{class:'wr-row'},...children);}
     notice(text,error=false){if(this.status){this.status.textContent=error?text:'';this.status.hidden=!error;}}
+    flash(text='已保存'){
+        this.lastFlash={text,at:Date.now()};if(!this.toast)return;
+        this.toast.textContent=text;this.toast.hidden=false;
+        clearTimeout(this.flashTimer);this.flashTimer=setTimeout(()=>{if(this.toast)this.toast.hidden=true;},1800);
+    }
+    closeDialog(){
+        if(this.draft&&!window.confirm('放弃尚未保存的编辑？'))return;
+        this.draft=null;this.dialog.close();
+    }
     save(text='已保存'){
-        syncGroups(this.s);this.app.save();this.notice(text);this.updateStates?.();this.updateTest?.();
+        syncGroups(this.s);this.app.save();this.notice('');this.flash(text);this.updateStates?.();this.updateTest?.();this.updateSummary?.();
     }
     open(prefill=''){
-        this.tab='词库';this.view='';this.selecting=false;this.selection.clear();this.draft=null;this.search='';
+        this.tab='词库';this.view='';this.selecting=false;this.selection.clear();this.draft=null;this.search='';this.lastFlash=null;
         this.render();if(!this.dialog.open)this.dialog.showModal();this.dialog.scrollTop=0;
         if(prefill){const g=this.current();if(g)this.editWord(g,null,prefill);}
     }
-    render(){
-        this.updateStates=null;this.updateTest=null;this.dialog.dataset.theme=this.s.theme;this.pane.replaceChildren();
+    themePicker(){
         const colors=Object.keys(THEMES),theme=this.btn('☼',()=>{
-            this.s.theme=colors[(colors.indexOf(this.s.theme)+1)%colors.length];this.dialog.dataset.theme=this.s.theme;this.app.save();describe();
+            const next=colors[(colors.indexOf(this.s.theme)+1)%colors.length];
+            this.s.theme=next;this.dialog.dataset.theme=next;this.app.save();this.render();this.flash(`配色：${THEMES[next]}`);
         },{class:'wr-button menu_button wr-theme-picker'});
-        const describe=()=>{theme.title=`配色：${THEMES[this.s.theme]} · 点击切换`;theme.setAttribute('aria-label',theme.title);};describe();
-        this.pane.append(node('header',{class:'wr-top'},node('div',{class:'wr-title'},node('strong',{},'词汇快捷替换'),this.check('启用处理',this.s.enabled,v=>{this.s.enabled=v;this.save();if(this.search.trim())this.renderSearch();})),
-            node('div',{class:'wr-top-actions'},theme,this.btn('×',()=>this.dialog.close(),{class:'wr-button menu_button wr-close','aria-label':'关闭管理窗口',title:'关闭'}))));
+        const describe=()=>{const title=`配色：${THEMES[this.s.theme]} · 点击切换`;theme.title=title;theme.setAttribute('aria-label',title);};
+        describe();theme.append(node('span',{class:'wr-theme-swatch','aria-hidden':'true'}));
+        return theme;
+    }
+    render(){
+        this.updateStates=null;this.updateTest=null;this.updateSummary=null;this.dialog.dataset.theme=this.s.theme;this.pane.replaceChildren();
+        this.pane.append(node('header',{class:'wr-top'},node('div',{class:'wr-title'},node('strong',{},'词汇快捷替换'),this.check('启用处理',this.s.enabled,v=>{this.s.enabled=v;this.save(v?'处理已启用':'处理已暂停');if(this.search.trim())this.renderSearch();})),
+            node('div',{class:'wr-top-actions'},this.themePicker(),this.btn('×',()=>this.closeDialog(),{class:'wr-button menu_button wr-close','aria-label':'关闭管理窗口',title:'关闭'}))));
         this.pane.append(node('nav',{class:'wr-tabs','aria-label':'管理页面'},...['词库','条件规则','保护词','冲突检查','设置'].map(name=>this.btn(name,()=>{
             this.tab=name;if(name==='条件规则'){this.conditionMode='presets';if(this.conditionPreset==='context')this.conditionPreset='keywords';}this.view='';this.search='';this.selecting=false;this.selection.clear();this.draft=null;this.page=0;this.render();this.dialog.scrollTop=0;
         },{'aria-current':this.tab===name?'page':'false',class:`menu_button wr-button ${this.tab===name?'wr-active':''}`}))))
         this.renderSearchBar();
         this.status=node('div',{class:'wr-status wr-error',role:'alert','aria-live':'assertive',hidden:true});
         this.body=node('main',{class:'wr-body'});this.pane.append(this.body,this.status);
+        this.toast=node('div',{class:'wr-toast',role:'status','aria-live':'polite',hidden:true});this.pane.append(this.toast);
+        if(this.lastFlash&&Date.now()-this.lastFlash.at<1800){
+            this.toast.textContent=this.lastFlash.text;this.toast.hidden=false;
+            clearTimeout(this.flashTimer);this.flashTimer=setTimeout(()=>{if(this.toast)this.toast.hidden=true;},1800);
+        }
         if(this.search.trim()){this.renderSearch();return;}
         if(this.tab==='保护词')this.renderProtectionTabs();
-        if(this.view){this.body.append(this.row(this.btn('‹ 返回'+this.tab,()=>{this.view='';this.render();}),node('h3',{},this.view)));if(this.view==='测试效果')this.renderTest(this.body);if(this.view==='导入与导出')this.renderBackup(this.body);return;}
+        if(this.view){this.body.append(node('header',{class:'wr-page-head'},this.btn('‹ 返回'+this.tab,()=>{this.view='';this.render();}),node('h3',{},this.view)));if(this.view==='测试效果')this.renderTest(this.body);if(this.view==='导入与导出')this.renderBackup(this.body);return;}
         if(this.tab==='设置'){this.renderSettings();return;}
         if(this.tab==='冲突检查'){this.body.append(node('h3',{},'冲突检查'));this.renderAudit(this.body);return;}
         if((this.tab==='条件规则'&&this.conditionMode==='presets')||(this.tab==='保护词'&&this.protectionMode==='rules')){this.renderTriggerPresets();return;}
         const groups=this.visibleGroups();
-        this.body.append(node('div',{class:'wr-section-head'},node('div',{},node('h3',{},this.tab),node('small',{},`${groups.length} 个分类 · ${groups.reduce((n,g)=>n+this.items(g).length,0)} 条`)),
+        this.body.append(node('div',{class:'wr-section-head'},node('div',{},node('h3',{},this.tab==='保护词'?'手动保护词':this.tab),node('small',{},`${groups.length} 个分类 · ${groups.reduce((n,g)=>n+this.items(g).length,0)} 条`)),
             this.row(...(this.tab==='条件规则'?[this.btn('返回触发模板',()=>{this.conditionMode='presets';this.draft=null;this.render();})]:[]),this.btn('测试效果',()=>this.showView('测试效果')))));
         this.categoryLayout();
     }
     renderProtectionTabs(){
         const tabs=node('nav',{class:'wr-protection-tabs','aria-label':'保护内容类型'});
-        for(const [mode,title]of [['terms','保护词'],['rules','内置保护规则']])tabs.append(this.btn(title,()=>{
-            this.protectionMode=mode;this.view='';this.search='';this.page=0;this.draft=null;this.selection.clear();this.selecting=false;this.render();this.dialog.scrollTop=0;
-        },{'aria-pressed':String(this.protectionMode===mode),class:`wr-button menu_button ${this.protectionMode===mode?'wr-active':''}`}));
-        const defaults=node('details',{class:'wr-advanced wr-protection-defaults'},node('summary',{},'通用保护'),
-            this.row(this.check('保护《书名》',this.s.protectTitles,v=>{this.s.protectTitles=v;this.save();}),this.check('保护代码块',this.s.protectCode,v=>{this.s.protectCode=v;this.save();})),
+        const meta=node('small',{class:'wr-protection-lead'},'保护优先：命中的文字不会被替换或删除，其余内容继续处理。');
+        for(const [mode,title,help]of [['terms','手动保护词','你添加的词语'],['rules','内置保护规则','针对正常用法的语境规则']]){
+            const button=this.btn('',()=>{
+                this.protectionMode=mode;this.view='';this.search='';this.page=0;this.draft=null;this.selection.clear();this.selecting=false;this.render();this.dialog.scrollTop=0;
+            },{'aria-pressed':String(this.protectionMode===mode),class:`wr-button menu_button ${this.protectionMode===mode?'wr-active':''}`});
+            button.append(node('span',{},title),node('small',{},help));tabs.append(button);
+        }
+        const defaults=node('details',{class:'wr-advanced wr-protection-defaults'},node('summary',{},'书名号与代码范围保护'),
+            this.row(this.check('保护《书名》',this.s.protectTitles,v=>{this.s.protectTitles=v;this.save('书名保护已更新');}),this.check('保护代码块',this.s.protectCode,v=>{this.s.protectCode=v;this.save('代码保护已更新');})),
             node('small',{},'按成对书名号与代码标记识别范围。特定词语的正常用法在内置保护规则中处理。'));
-        this.body.append(tabs,defaults);
+        this.body.append(tabs,meta,defaults);
     }
     showView(view){this.view=view;this.render();this.dialog.scrollTop=0;}
     renderSearchBar(){
+        if(this.tab==='设置'||this.tab==='冲突检查'||this.view)return;
         const input=this.field(this.search,'全局搜索：原词、替换词、规则、保护词',value=>{
             this.search=value;this.page=0;this.selection.clear();this.selecting=false;
             clear.hidden=!value;
@@ -278,7 +302,10 @@ export class Manager{
                 list.lastChild.querySelector('.wr-word-copy').append(node('span',{class:'wr-original'},r.from),node('span',{class:'wr-word-arrow','aria-hidden':'true'},'→'),node('span',{class:r.to===''?'wr-delete-label':'wr-replacement'},r.to===''?'〔删除〕':r.to));
                 if(issue?.kind==='conflict'&&r.enabled)list.lastChild.querySelector('.wr-word-copy').append(node('small',{class:'wr-conflict'},'替换冲突'));
             }
-            if(!rows.length)list.append(node('div',{class:'wr-empty'},'添加第一条替换，或导入已有词库。'));
+            if(!rows.length)list.append(this.s.groups.some(x=>x.rules.length)?node('div',{class:'wr-empty'},'这个分类还没有词条。可以在上方添加，或从其他分类粘贴。'):node('div',{class:'wr-empty wr-onboarding'},node('h4',{},'从第一条词开始'),
+                node('p',{},'用本地规则整理文字：替换、删除，或保护不想被改动的表达。'),
+                node('ol',{class:'wr-steps'},node('li',{},'在上方填写原词与替换词；替换词留空表示删除。'),node('li',{},'按回车连续录入，点击词条可修改。'),node('li',{},'用「测试效果」预览，确认后再在设置中导出备份。')),
+                this.row(this.btn('导入已有词库',()=>this.showView('导入与导出'),{class:'wr-button menu_button wr-primary'}),this.btn('测试一段文字',()=>this.showView('测试效果')))));
             pager.append(this.btn('上一页',()=>{this.page--;draw();},{hidden:max===0,disabled:this.page===0}),node('small',{},`${rows.length} 条${max?` · ${this.page+1}/${max+1} 页`:''}`),this.btn('下一页',()=>{this.page++;draw();},{hidden:max===0,disabled:this.page===max}));
             batchState();
         };
@@ -307,13 +334,13 @@ export class Manager{
                 if(this.s.groups.reduce((n,x)=>n+x.rules.length,0)>=20000)throw new Error('词条数量已达到 20000。');
                 g.rules.push({id:uid(),from:from.value,to:to.value,enabled:true});
             }
-            this.wordDrafts.delete(g.id);this.search='';this.page=wordRulePage(g,old??g.rules.at(-1),this.s);this.save();this.render();this.body.querySelector('.wr-add-inline input')?.focus();
-            this.notice(old?`已更新词条${old.enabled?'':' · 该词条已停用'}`:'已添加，可以继续填写下一条。');
-        })},this.label('原词',from),node('span',{class:'wr-add-arrow','aria-hidden':'true'},'→'),this.label('替换为',to),this.btn('添加',()=>{}, {type:'submit',class:'wr-button menu_button wr-primary'}));
-        const displayOptions=node('div',{class:'wr-word-view-options'},this.label('每页显示',this.select(String(wordPageSize(this.s)),'每页词条数',{'10':'10 条','15':'15 条'},value=>{this.s.wordPageSize=Number(value);this.page=0;this.save();this.render();})),
-            this.label('排列方式',this.select(this.s.wordOrder??'default','词条排序',WORD_ORDERS,value=>{this.s.wordOrder=value;this.page=0;this.save();this.render();})));
-        content.append(add,displayOptions,
-            this.row(this.btn(this.selecting?'完成选择':'批量选择',()=>{this.selecting=!this.selecting;this.selection.clear();this.render();}),pasteButton),paste,list,pager,batch);
+            this.wordDrafts.delete(g.id);this.search='';this.page=wordRulePage(g,old??g.rules.at(-1),this.s);this.save(old?`已更新：${from.value}${old.enabled?'':'（该词条仍为停用）'}`:`已添加：${from.value}`);this.render();this.body.querySelector('.wr-add-inline input')?.focus();
+        })},this.label('原词',from),node('span',{class:'wr-add-arrow','aria-hidden':'true'},'→'),this.label('替换为',to),this.btn('添加',()=>{}, {type:'submit',class:'wr-button menu_button wr-primary'}),node('small',{class:'wr-add-hint'},'替换词留空 = 删除该词 · 按回车连续添加'));
+        const viewTools=node('div',{class:'wr-view-tools'},
+            node('label',{class:'wr-inline-field'},node('span',{},'每页'),this.select(String(wordPageSize(this.s)),'每页词条数',{'10':'10 条','15':'15 条'},value=>{this.s.wordPageSize=Number(value);this.page=0;this.save('已更新每页数量');this.render();})),
+            node('label',{class:'wr-inline-field'},node('span',{},'排序'),this.select(this.s.wordOrder??'default','词条排序',WORD_ORDERS,value=>{this.s.wordOrder=value;this.page=0;this.save('已更新排列方式');this.render();})));
+        const listToolbar=node('div',{class:'wr-list-toolbar'},this.row(this.btn(this.selecting?'完成选择':'批量选择',()=>{this.selecting=!this.selecting;this.selection.clear();this.render();}),pasteButton),viewTools);
+        content.append(add,listToolbar,paste,list,pager,batch);
         const text=this.area('','每行一条：\n单车=自行车\n【待删】=',null);
         content.append(node('details',{class:'wr-advanced'},node('summary',{},'批量添加'),text,this.btn('检查并添加',()=>{
             const items=parseBatch(text.value);if(!items.length)throw new Error('请填写词条。');const draft=structuredClone(this.s),target=draft.groups.find(x=>x.id===g.id);
@@ -481,15 +508,17 @@ export class Manager{
         else form.append(this.label('处理方式',this.select(r.inheritAction?'inherit':r.action,'处理范围',r.kind==='context'?{context:'使用模板默认改法',word:ACTIONS.word,replace:ACTIONS.replace}:r.kind==='boundary'?{clause:'按指定边界删除'}:{inherit:`沿用分类：${ACTIONS[g.defaultAction]}`,...options},v=>{r.inheritAction=v==='inherit';if(!r.inheritAction)r.action=v;this.render();})));
         if(!r.inheritAction&&r.action==='replace')form.append(this.label('替换为',this.area(r.to??'','替换文字',v=>update('to',v),3)));
         form.append(this.renderFilters(r,preview),node('details',{class:'wr-more-options'},node('summary',{},'备注（可选）'),this.label('备注名称',this.field(r.name,'备注名称（可选）',v=>update('name',v),{maxLength:100}))),node('details',{class:'wr-more-options'},node('summary',{},'进阶：保护优先级'),r.kind==='context'?node('small',{},'保护词优先于本条语境处理。'):this.label('与保护内容重叠时',this.select(r.respectProtection?'protect':'clean','保护优先级',{protect:'保护优先：保留命中的词',clean:'清理优先：执行本条规则'},v=>update('respectProtection',v==='protect'))),node('small',{},'保护优先时，只保留保护词和已开启的书名、代码范围，其余命中内容继续清理。')));
-        sandbox.append(node('b',{},'3 · 查看效果'),sample,node('small',{},'高亮部分为匹配范围'),marked,node('b',{},'处理后'),output,state,inspector.element);
-        box.append(node('h4',{},draft.originalId?'编辑触发内容':'添加触发内容'),node('div',{class:'wr-editor-grid'},form,sandbox),node('div',{class:'wr-editor-actions'},this.btn('查看效果 ↓',()=>sandbox.scrollIntoView?.({block:'start'})),this.btn('取消',()=>{this.draft=null;this.render();}),this.btn(draft.originalId?'保存修改':'添加并启用',()=>{
+        sandbox.append(node('div',{class:'wr-sandbox-head'},node('b',{},'效果预览'),node('span',{class:'wr-live-badge'},'实时'),node('small',{},'修改左侧条件后立即更新')),sample,node('small',{},'高亮部分为匹配范围'),marked,node('b',{},'处理后'),output,state,inspector.element);
+        const saveButton=this.btn(draft.originalId?'保存修改':'添加并启用',()=>{
             const valid=validateRule(r),old=g.rules.find(x=>x.id===draft.originalId);if(!this.s.ruleGroups.includes(g)&&this.s.ruleGroups.length>=200)throw new Error('规则分类数量已达到 200。');if(old)g.rules[g.rules.indexOf(old)]={...valid,id:old.id};else{
                 if(this.s.ruleGroups.reduce((n,g)=>n+g.rules.length,0)>=20000)throw new Error('条件规则数量已达到 20000。');g.rules.push(valid);
             }
             if(!this.s.ruleGroups.includes(g))this.s.ruleGroups.push(g);
             if(this.conditionMode==='presets')this.page=Math.max(0,Math.floor(presetEntries(this.s,this.conditionPreset).findIndex(entry=>entry.rule.id===(old?.id??valid.id))/60));
-            this.draft=null;this.save();this.render();
-        },{class:'wr-button menu_button wr-primary'})));
+            this.draft=null;this.save(old?'修改已保存':'规则已添加');this.render();
+        },{class:'wr-button menu_button wr-primary'});
+        box.append(node('h4',{},draft.originalId?'编辑触发内容':'添加触发内容',node('small',{class:'wr-editor-hint'},'所有改动在保存后写入本地配置')),node('div',{class:'wr-editor-grid'},form,sandbox),node('div',{class:'wr-editor-actions'},this.btn('查看效果 ↓',()=>sandbox.scrollIntoView?.({block:'start'})),this.btn('取消',()=>{this.draft=null;this.render();}),saveButton));
+        box.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();saveButton.click();}});
         content.insertBefore(box,content.children[2]??null);preview();
     }
     renderFilters(r,preview){
@@ -666,7 +695,7 @@ export class Manager{
         });
         const paste=this.btn('粘贴 JSON',()=>{pastePanel.hidden=!pastePanel.hidden;if(!pastePanel.hidden)pasted.focus();});
         const section=this.select('all','导出内容',{all:'完整配置',groups:'全部词库',ruleGroups:'全部条件规则',protectionGroups:'全部保护词'},()=>{});
-        body.append(node('section',{class:'wr-import-card'},node('h4',{},'导入'),this.row(choose,paste),input,filename,pastePanel,preview,mode,feedback,confirm),
+        body.append(node('p',{class:'wr-lead'},'备份文件包含词库、条件规则、保护词和设置。读取时先校验格式，确认后才会写入配置。'),node('section',{class:'wr-import-card'},node('h4',{},'导入'),this.row(choose,paste),input,filename,pastePanel,preview,mode,node('small',{},'追加分类保留当前内容；恢复完整配置会替换当前内容，并在替换前下载备份。'),feedback,confirm),
             node('section',{class:'wr-import-card'},node('h4',{},'导出'),section,this.btn('导出 JSON',()=>{
                 const s=structuredClone(this.s);if(section.value!=='all'){
                     if(section.value==='protectionGroups'){
@@ -677,12 +706,40 @@ export class Manager{
             }),node('small',{},'指定分类的保护词会一并导出对应分类，便于恢复保护范围。')));
     }
     renderSettings(){
-        const body=this.body;
-        const section=(title,...children)=>node('section',{class:'wr-import-card'},node('h4',{},title),...children);
-        const edited=this.check('编辑后生效',this.s.edited,v=>{this.s.edited=v;this.save();});edited.title='保存聊天消息的编辑后，重新应用替换规则。';
-        body.append(node('h3',{},'设置'),section('处理哪些消息',this.row(this.check('AI 输出',this.s.assistant,v=>{this.s.assistant=v;this.save();}),this.check('自己的消息',this.s.user,v=>{this.s.user=v;this.save();}))),
-            section('生效方式',this.row(this.check('影响显示',this.s.display,v=>{this.s.display=v;this.save();}),this.check('影响模型输入',this.s.prompt,v=>{this.s.prompt=v;this.save();}),edited,this.check('保护《书名》',this.s.protectTitles,v=>{this.s.protectTitles=v;this.save();}),this.check('保护代码块',this.s.protectCode,v=>{this.s.protectCode=v;this.save();}))),
-            section('数据与工具',this.row(this.btn('导入 / 导出',()=>this.showView('导入与导出')),this.btn('测试效果',()=>this.showView('测试效果')),
-                ...(this.app.beforeMigration?[this.btn('导出升级前配置',()=>download(`ST-WordReplacer-before-v4-${stamp()}.json`,this.app.beforeMigration))]:[]))));
+        const body=this.body,s=this.s;
+        const card=(title,lead,...children)=>node('section',{class:'wr-settings-card'},node('header',{class:'wr-card-head'},node('h4',{},title),lead?node('p',{},lead):null),...children);
+        const option=(title,help,checked,onChange)=>node('label',{class:'wr-option'},node('input',{type:'checkbox',checked,onchange:this.safe(e=>onChange(e.target.checked))}),node('span',{},node('b',{},title),node('small',{},help)));
+        const summary=node('section',{class:'wr-settings-summary','aria-live':'polite'});
+        const drawSummary=()=>{
+            const messages=[s.assistant&&'AI 输出',s.user&&'你的消息'].filter(Boolean),places=[s.display&&'聊天显示',s.prompt&&'模型输入'].filter(Boolean);
+            const state=node('div',{class:'wr-summary-state'},node('span',{class:`wr-dot ${s.enabled?'':'wr-dot-off'}`,'aria-hidden':'true'}),
+                node('div',{},node('b',{},s.enabled?'正在处理':'已暂停'),node('small',{},s.enabled?`${messages.join('、')||'未选择消息'} · ${places.join(' + ')||'不会生效'}`:'总开关已暂停：聊天和模型输入都保持原文。')));
+            const warning=!s.enabled?null:!messages.length?'没有选择任何消息，插件不会处理内容。':!places.length?'没有选择生效位置，处理结果不会出现。':s.display!==s.prompt?'显示与模型输入不同步：你在聊天中看到的文字，可能和模型收到的不同。':null;
+            const parts=[node('div',{class:'wr-summary-row'},state,node('div',{class:'wr-summary-actions'},this.btn('测试效果',()=>this.showView('测试效果')),this.btn('导入 / 导出',()=>this.showView('导入与导出'))))];
+            if(warning)parts.push(node('p',{class:'wr-summary-warning',role:'status'},warning));
+            summary.replaceChildren(...parts);
+        };
+        body.append(node('header',{class:'wr-settings-head'},node('div',{},node('h3',{},'设置'),node('p',{},'调整处理范围与保存方式。更改立即生效，并保存在当前 ST 用户配置中。'))),summary,
+            node('div',{class:'wr-settings-grid'},
+                card('处理哪些消息','选择要被处理的消息。关闭后该消息保持原文。',
+                    option('AI 输出','处理角色回复、生成内容与消息版本。',s.assistant,v=>{s.assistant=v;this.save(v?'已处理 AI 输出':'已停止处理 AI 输出');}),
+                    option('你的消息','处理你发送的内容。关闭时只处理 AI 一侧。',s.user,v=>{s.user=v;this.save(v?'已处理你的消息':'已停止处理你的消息');})),
+                card('生效位置','处理结果放在哪里。显示和模型输入可以分开设置。',
+                    option('聊天中显示','替换后的文字出现在聊天正文里。关闭后聊天保持原文，但模型仍可能收到替换结果。',s.display,v=>{s.display=v;this.save(v?'已更新聊天显示':'聊天已恢复原文显示');}),
+                    option('发送给模型','把替换后的副本作为上下文发给模型。关闭后模型收到原文。',s.prompt,v=>{s.prompt=v;this.save(v?'已更新模型输入':'模型将收到原文');}),
+                    option('编辑消息后重新处理','保存你手动编辑的消息时重新应用规则；关闭后保留编辑的原文。',s.edited,v=>{s.edited=v;this.save(v?'编辑后会重新处理':'编辑后保持原文');})),
+                card('内容保护','这些范围内的文字不会被替换或删除；聊天原文始终保留。',
+                    option('保护《书名》','同一行内成对书名号里的文字保持原样。',s.protectTitles,v=>{s.protectTitles=v;this.save(v?'已保护书名':'已停止保护书名');}),
+                    option('保护代码块','代码围栏与行内代码保持原样。',s.protectCode,v=>{s.protectCode=v;this.save(v?'已保护代码块':'已停止保护代码');}),
+                    this.btn('管理保护词与正常用法',()=>{this.tab='保护词';this.protectionMode='terms';this.view='';this.render();this.dialog.scrollTop=0;},{class:'wr-button menu_button wr-card-action'})),
+                card('数据与备份','词库只保存在本机浏览器中。更换设备或清理浏览器数据前，请先导出。',
+                    node('div',{class:'wr-card-actions'},this.btn('导入 / 导出',()=>this.showView('导入与导出'),{class:'wr-button menu_button wr-primary'}),this.btn('测试效果',()=>this.showView('测试效果')),
+                        ...(this.app.beforeMigration?[this.btn('导出升级前配置',()=>download(`ST-WordReplacer-before-v4-${stamp()}.json`,this.app.beforeMigration))]:[])),
+                    node('small',{},'导出会下载 JSON 备份；恢复完整配置前会自动下载当前备份。')),
+            card('处理顺序与说明','',
+                node('ol',{class:'wr-order'},node('li',{},node('b',{},'条件规则'),'先处理句子、固定结构和起止标记。'),node('li',{},node('b',{},'词库'),'再处理固定文字替换与删除。'),node('li',{},node('b',{},'保护词'),'全程优先保留命中的文字。')),
+                node('p',{},'普通词库按字面匹配，长词优先。处理只作用于显示副本与模型请求副本，聊天文件和 swipe 原文不会被改写。'),
+                node('div',{class:'wr-about-links'},node('a',{href:'https://github.com/kyoya0307/ST-WordReplacer#readme',target:'_blank',rel:'noopener noreferrer'},'使用说明'),node('a',{href:'https://github.com/kyoya0307/ST-WordReplacer/issues',target:'_blank',rel:'noopener noreferrer'},'反馈问题'),node('span',{},'本地运行 · 不联网 · 不需要 API')))));
+        this.updateSummary=drawSummary;drawSummary();
     }
 }

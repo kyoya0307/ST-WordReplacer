@@ -16,53 +16,18 @@ export function validateExceptions(values=[]) {
     if(out.length>5000||out.some(s=>s.length>2000))throw new Error('保护词最多 5000 条，每条最多 2000 字。');
     return out;
 }
-// to 始终保存当前生效文字；候选是可选数据，普通词条无需迁移。
+// to 保存唯一生效的替换文字；旧备份中的 alternatives/multiple 会被忽略。
 export function replacementData(rule) {
     if(typeof rule.to!=='string'||rule.to.length>10000)throw new Error('替换词必须为不超过 10000 字的文字。');
-    const out={to:rule.to};
-    if(rule.multiple!==undefined&&typeof rule.multiple!=='boolean')throw new Error('多个替换词开关格式不正确。');
-    if(rule.alternatives!==undefined){
-        if(!Array.isArray(rule.alternatives)||!rule.alternatives.length||rule.alternatives.length>50||rule.alternatives.some(s=>typeof s!=='string'||s.length>10000))throw new Error('每条词最多 50 个候选，每个候选不超过 10000 字。');
-        if(!rule.alternatives.includes(rule.to))throw new Error('当前替换词必须在候选列表中。');
-        out.alternatives=[...new Set(rule.alternatives)];out.multiple=rule.multiple===true;
-    }else if(rule.multiple)throw new Error('请先添加候选替换词。');
-    return out;
+    return {to:rule.to};
 }
 export function setReplacement(rule,value) {
     if(typeof value!=='string'||value.length>10000)throw new Error('替换词不能超过 10000 字。');
-    if(rule.alternatives)rule.alternatives=[...new Set(rule.alternatives.map(x=>x===rule.to?value:x))];
     rule.to=value;
 }
-export function enableAlternatives(rule,enabled) {
-    if(enabled){rule.alternatives??=[rule.to];rule.multiple=true;}
-    else if(rule.alternatives)rule.multiple=false;
-}
-export function addAlternative(rule,value) {
-    if(typeof value!=='string'||value.length>10000)throw new Error('候选文字不能超过 10000 字。');
-    if(!rule.multiple)throw new Error('请先启用此词的多个替换词。');
-    if(rule.alternatives.includes(value))throw new Error('已有相同候选，无需重复添加。');
-    if(rule.alternatives.length>=50)throw new Error('每条词最多 50 个候选。');
-    rule.alternatives.push(value);
-}
-export function editAlternative(rule,index,value) {
-    if(!rule.alternatives||!Number.isInteger(index)||index<0||index>=rule.alternatives.length)throw new Error('候选已不存在。');
-    if(typeof value!=='string'||value.length>10000)throw new Error('候选文字不能超过 10000 字。');
-    if(rule.alternatives.some((x,i)=>i!==index&&x===value))throw new Error('已有相同候选，请选择已有项。');
-    const active=rule.to===rule.alternatives[index];rule.alternatives[index]=value;if(active)rule.to=value;
-}
-export function removeAlternative(rule,index) {
-    if(!rule.alternatives||!Number.isInteger(index)||index<0||index>=rule.alternatives.length)throw new Error('候选已不存在。');
-    if(rule.alternatives[index]===rule.to)throw new Error('请先选择另一个候选，再删除当前使用项。');
-    rule.alternatives.splice(index,1);
-}
-export function selectAlternative(rule,value) {
-    if(!rule.multiple||!rule.alternatives?.includes(value))throw new Error('候选未启用或不存在。');
-    rule.to=value;
-}
-export const matchesRule = (rule,query) => [rule.from,rule.to,...(rule.alternatives??[])].some(x=>x.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
-const sameReplacement=(a,b)=>JSON.stringify(replacementData(a))===JSON.stringify(replacementData(b));
+const sameReplacement=(a,b)=>a.to===b.to;
 function copyReplacement(target,source) {
-    const data=replacementData(source);delete target.alternatives;delete target.multiple;Object.assign(target,data);
+    target.to=source.to;delete target.alternatives;delete target.multiple;
 }
 function baseSettings() {
     return { version: 3, theme:'st', wordPageSize:15,wordOrder:'default',enabled: true, assistant: true, user: false, edited: true, display: true, prompt: true,

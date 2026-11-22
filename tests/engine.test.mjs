@@ -5,9 +5,9 @@ import { displayCopy, transformPrompt } from '../runtime.js';
 function custom(rules, extras={}) {
     return {...createSettings(),contextual:false,groups:[{id:'test',name:'测试',enabled:true,rules:rules.map(([from,to])=>({from,to,enabled:true}))}],...extras};
 }
-test('迁入原词库 124 条并保留原值',()=>{
-    const s=createSettings();assert.equal(s.groups.flatMap(g=>g.rules).length,124);
-    assert.equal(compile(s).run('巾帼不让须眉，旺夫相，命硬克夫。').text,'，锦程相，命格自强。');
+test('迁入测试词库 7 条并保留原值',()=>{
+    const s=createSettings();assert.equal(s.groups.flatMap(g=>g.rules).length,7);
+    assert.equal(compile(s).run('测试删词，旧称呼，㐀。').text,'，新称呼，㐁。');
     assert.equal(s.user,false);assert.equal(s.edited,true);assert.equal(s.display,true);assert.equal(s.prompt,true);
 });
 test('长词优先，空值删除，替换结果不串改',()=>{
@@ -77,9 +77,15 @@ test('JSON 校验，拒绝脚本及非法空原词，不执行导入内容',()=>
     assert.throws(()=>validateSettings({...custom([]),exceptions:[{}]}));
     const s=custom([['<script>','<img onerror=evil()>']]);assert.equal(validateSettings(s).groups[0].rules[0].to,'<img onerror=evil()>');
 });
+test('旧备份的候选字段被忽略，当前替换词继续生效',()=>{
+    const s=validateSettings({...createSettings(),groups:[{id:'old',name:'旧规则',enabled:true,rules:[{id:'r',from:'旧称',to:'新称',alternatives:['新称','别称'],multiple:true,enabled:true}]}]});
+    const rule=s.groups[0].rules[0];
+    assert.equal(rule.to,'新称');assert.equal(Object.hasOwn(rule,'alternatives'),false);assert.equal(Object.hasOwn(rule,'multiple'),false);
+    assert.equal(compile(s).run('旧称').text,'新称');
+});
 test('有效备份往返及深拷贝',()=>{
     const s=createSettings(),copy=validateSettings(JSON.parse(JSON.stringify(s)));
-    assert.equal(copy.groups.flatMap(g=>g.rules).length,124);
+    assert.equal(copy.groups.flatMap(g=>g.rules).length,7);
     copy.groups[0].rules[0].to='其他';assert.notEqual(s.groups[0].rules[0].to,'其他');
 });
 test('重复只提示，仅同时启用的不同替换列为冲突，并显示当前胜出规则',()=>{
