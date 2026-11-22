@@ -1,3 +1,4 @@
+// 用途：记录命中原因与规则来源。
 // Diagnostics keep their own provenance, including text produced by earlier rules.
 // Positions always refer to the input supplied to run(), never to a later stage.
 export class ExplanationTrace {
