@@ -1,3 +1,4 @@
+// 用途：处理聊天显示与模型输入副本。
 // 自动处理只作用于显示副本和生成请求副本，从不修改 chat / swipes / extra。
 import { patchDisplayText } from './display-dom.js';
 import {installStreamingDisplay} from './streaming.js';
