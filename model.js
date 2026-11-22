@@ -1,3 +1,4 @@
+// 用途：配置校验与迁移。
 // Shared structure for categories, migration and scoped protection.
 import { validateSentenceRules } from './sentences.js';
 import {CONTEXT_RULES,contextKeep,validateContextKeep} from './legacy.js';
