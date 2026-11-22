@@ -1,3 +1,4 @@
+// 用途：句段结构与模板匹配。
 // Literal-text templates: no user-supplied regular expression or model request.
 export const TEMPLATE_MATCHES={any:'包含任意一个词',all:'同一句同时包含所有词（不限顺序）'};
 export const TEMPLATE_SCOPES={clause:'删除命中的连续分句（逗号分隔）',sentence:'删除完整句子'};
