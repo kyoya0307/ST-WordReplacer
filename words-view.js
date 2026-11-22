@@ -1,3 +1,4 @@
+// 用途：词条排序与分页。
 export const WORD_PAGE_SIZES=Object.freeze([10,15]);
 export const WORD_ORDERS=Object.freeze({default:'默认顺序',pinyin:'原词拼音顺序'});
 const pinyin=new Intl.Collator('zh-CN-u-co-pinyin',{numeric:true,sensitivity:'base'});
