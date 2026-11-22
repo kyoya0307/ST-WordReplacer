@@ -1,3 +1,4 @@
+/* 用途：管理界面布局与样式。 */
 @import url('./themes.css');
 #wr-manager .wr-quick-filter{display:grid;gap:5px}#wr-manager .wr-quick-filter>.wr-row{justify-content:space-between}#wr-manager .wr-filter-edit{font-size:12px;min-height:32px;padding:5px 10px}
 #wr-manager .wr-import-filename{font-size:12px;overflow-wrap:anywhere;color:var(--wr-muted)}
