@@ -1,3 +1,4 @@
+// 用途：规则与显示行为回归测试。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createSettings, validateSettings, validateExceptions, compile, parseBatch, inspectRules, planPaste, pasteRules } from '../engine.js';
