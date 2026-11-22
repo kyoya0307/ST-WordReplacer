@@ -1,3 +1,4 @@
+// 用途：清理删空对白与引导语。
 // Quote-aware deletion uses original offsets so rich-message text patches remain reversible.
 const quotePairs = { '“': '”', '‘': '’', '「': '」', '『': '』', '"': '"' };
 const overlaps = (a, b) => a.start < b.end && a.end > b.start;
